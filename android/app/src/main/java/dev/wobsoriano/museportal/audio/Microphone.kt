@@ -31,6 +31,8 @@ object Microphone {
           open(MediaRecorder.AudioSource.VOICE_RECOGNITION) ?: open(MediaRecorder.AudioSource.MIC)
         } catch (e: SecurityException) {
           return Capture.Failed("Microphone permission is off")
+        } catch (e: IllegalArgumentException) {
+          null
         } ?: return Capture.Failed("The microphone is not available")
     try {
       rec.startRecording()

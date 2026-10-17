@@ -36,22 +36,28 @@ class CoreProcess(
   private class Running(val process: Process, val stdin: LinkedBlockingQueue<String>)
 
   @Volatile private var running: Running? = null
-  @Volatile private var stopped = false
-  private var supervisor: Thread? = null
+  // Only the current supervisor may restart musecore; one left over from an earlier start() exits.
+  @Volatile private var supervisor: Thread? = null
 
+  @Synchronized
   fun start() {
     if (supervisor != null) return
-    stopped = false
-    supervisor = thread(name = "musecore-supervisor") { supervise() }
+    val t = thread(start = false, name = "musecore-supervisor") { supervise() }
+    supervisor = t
+    t.start()
   }
 
+  @Synchronized
   fun stop() {
-    stopped = true
-    supervisor?.interrupt()
+    val old = supervisor ?: return
     supervisor = null
+    old.interrupt()
     running?.process?.destroy()
     onState(CoreState.Stopped)
   }
+
+  private val current
+    get() = supervisor === Thread.currentThread()
 
   /** False when musecore is not running; the command is dropped. */
   fun send(command: Command): Boolean {
@@ -62,7 +68,7 @@ class CoreProcess(
 
   private fun supervise() {
     var failures = 0
-    while (!stopped) {
+    while (current) {
       if (!binary.exists()) {
         Log.e(TAG, "missing ${binary.path}")
         onState(CoreState.Missing(binary.path))
@@ -79,7 +85,7 @@ class CoreProcess(
             Log.e(TAG, "musecore failed to run", e)
             -1
           }
-      if (stopped) return
+      if (!current) return
       if (System.currentTimeMillis() - startedAt > HEALTHY_MS) failures = 0
       val delay = minOf(MAX_BACKOFF_MS, 1000L shl minOf(failures, 5))
       failures++

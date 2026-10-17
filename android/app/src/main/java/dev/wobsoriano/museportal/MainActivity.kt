@@ -122,7 +122,7 @@ private fun statusLine(state: MuseState): Pair<String, Color> {
   val warn = Color(0xFFFFC66D)
   val bad = Color(0xFFFF6B6B)
   return when (val core = state.core) {
-    is CoreState.Missing -> "musecore is not in this build (${core.path})" to bad
+    is CoreState.Missing -> "musecore is not in this build" to bad
     is CoreState.Restarting -> "Muse stopped (exit ${core.exitCode}), restarting in ${core.inMs / 1000} s" to warn
     CoreState.Stopped -> "Stopped" to warn
     CoreState.Starting -> "Starting" to warn
