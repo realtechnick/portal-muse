@@ -28,15 +28,22 @@ func setNameservers(servers []string) {
 	nameservers.Store(&list)
 }
 
+// nextServer rotates the starting server. A UDP dial succeeds whether or not anyone answers, so
+// trying servers in order within one dial never falls back; the resolver's own retries, each a
+// fresh dial, do once every dial starts at the next server.
+var nextServer atomic.Uint32
+
 func dialNameserver(ctx context.Context, network, address string) (net.Conn, error) {
 	var d net.Dialer
 	servers := nameservers.Load()
 	if servers == nil || len(*servers) == 0 {
 		return d.DialContext(ctx, network, address)
 	}
+	list := *servers
+	start := int(nextServer.Add(1)-1) % len(list)
 	var errs []error
-	for _, s := range *servers {
-		conn, err := d.DialContext(ctx, network, s)
+	for i := range list {
+		conn, err := d.DialContext(ctx, network, list[(start+i)%len(list)])
 		if err == nil {
 			return conn, nil
 		}

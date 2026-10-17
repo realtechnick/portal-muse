@@ -6,11 +6,12 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 go=${GO:-go}
 jni="$root/android/app/src/main/jniLibs"
+version=$(git -C "$root" describe --always --dirty 2>/dev/null || echo dev)
 
 build() {
 	arch=$1 abi=$2
 	mkdir -p "$jni/$abi"
-	(cd "$root/core" && CGO_ENABLED=0 GOOS=linux GOARCH=$arch "$go" build -trimpath -ldflags "-s -w" \
+	(cd "$root/core" && CGO_ENABLED=0 GOOS=linux GOARCH=$arch "$go" build -trimpath -ldflags "-s -w -X main.version=$version" \
 		-o "$jni/$abi/libmusecore.so" ./cmd/musecore)
 	echo "$jni/$abi/libmusecore.so"
 }
