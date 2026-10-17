@@ -25,7 +25,7 @@ sealed interface AskInput {
 
   data class Level(val level: Float) : AskInput
 
-  /** The recording was sent to musecore as `ask` [id]. */
+  /** A recording or a typed question went to musecore as `ask` [id]. */
   data class Sent(val id: String) : AskInput
 
   data class NotSent(val reason: String) : AskInput
@@ -49,7 +49,7 @@ fun AskState.next(input: AskInput): AskStep =
           if (this is AskState.Recording) AskStep(this, AskEffect.StopRecording)
           else AskStep(AskState.Recording(), AskEffect.StartRecording)
       is AskInput.Level -> AskStep(if (this is AskState.Recording) copy(level = input.level) else this)
-      is AskInput.Sent -> AskStep(if (this is AskState.Recording) AskState.Sending(input.id) else this)
+      is AskInput.Sent -> AskStep(AskState.Sending(input.id))
       is AskInput.NotSent -> AskStep(if (this is AskState.Recording) AskState.Failed(input.reason) else this)
       is AskInput.Reply -> onReply(input.reply)
     }

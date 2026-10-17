@@ -79,4 +79,10 @@ class AskStateTest {
     val last = run(AskInput.Tap, AskInput.Sent("a1"), reply(ReplyKind.Done, "Hi."), AskInput.Tap).last()
     assertEquals(AskStep(AskState.Recording(), AskEffect.StartRecording), last)
   }
+
+  @Test
+  fun aTypedQuestionReplacesTheLastAnswer() {
+    val last = run(AskInput.Tap, AskInput.Sent("a1"), reply(ReplyKind.Done, "Hi."), AskInput.Sent("a2")).last()
+    assertEquals(AskStep(AskState.Sending("a2")), last)
+  }
 }
