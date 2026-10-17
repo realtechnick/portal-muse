@@ -49,6 +49,7 @@ class Checks(
     device()
     permissions()
     packages()
+    home()
     tts()
     runtime()
     network()
@@ -98,6 +99,19 @@ class Checks(
         put("com.facebook.aloha*", installed.filter { it.startsWith("com.facebook.aloha") }.ifEmpty { "none" })
         val words = listOf("aloha", "millennium", "falcon", "tts", "speech", "voice", "hotword")
         put("matching", installed.filter { pkg -> words.any { pkg.contains(it, ignoreCase = true) } })
+      }
+
+  /** Whether a sideloaded app can be the home screen, and which apps a launcher would list. */
+  private fun home() =
+      report.section("home") {
+        val pm = context.packageManager
+        val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        put("candidates", pm.queryIntentActivities(homeIntent, 0).map { it.activityInfo.packageName + "/" + it.activityInfo.name })
+        get("default") {
+          pm.resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.let { it.packageName + "/" + it.name }
+        }
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        put("launchable", pm.queryIntentActivities(launcherIntent, 0).map { it.activityInfo.packageName }.distinct().sorted())
       }
 
   private fun tts() =
