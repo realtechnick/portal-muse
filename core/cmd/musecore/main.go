@@ -26,9 +26,23 @@ func main() {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	installResolver()
+	useAndroidRoots()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	slog.Info("musecore starting", "version", version)
 	run(ctx, *data, os.Stdin, os.Stdout)
+}
+
+// androidRoots is where Android keeps the system's trusted CAs. A GOOS=linux binary only looks in
+// the usual Linux places, so on Android it would trust nothing; SSL_CERT_DIR points it here.
+const androidRoots = "/system/etc/security/cacerts"
+
+func useAndroidRoots() {
+	if os.Getenv("SSL_CERT_DIR") != "" || os.Getenv("SSL_CERT_FILE") != "" {
+		return
+	}
+	if info, err := os.Stat(androidRoots); err == nil && info.IsDir() {
+		os.Setenv("SSL_CERT_DIR", androidRoots)
+	}
 }
