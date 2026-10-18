@@ -21,7 +21,7 @@ import org.vosk.Model
 import org.vosk.Recognizer
 
 /**
- * Listens for "Hey Muse" for [SECONDS] s with Vosk in grammar mode and :wake's [VoskWake] rule, fed
+ * Listens for "Hey Muse" for [SECONDS] s, following an on-screen script of attempt and no-wake windows, with Vosk in grammar mode and :wake's [VoskWake] rule, fed
  * 100 ms at a time from VOICE_RECOGNITION at 16 kHz mono, as portal-wake does. Reports the model load,
  * every final result, wakes and near misses, what decoding costs, and saves the audio as `vosk.wav` so
  * `tools/wakeeval` can replay it. Not part of a full run: `--es only vosk`.
@@ -35,10 +35,10 @@ internal fun voskCheck(context: Context, report: Report, prompt: (String) -> Uni
         put("recording", "skipped: RECORD_AUDIO denied")
         return@section
       }
-      val dir = File(context.getExternalFilesDir(null), MODEL)
-      val missing = listOf("am", "conf", "graph", "ivector").filter { !File(dir, it).isDirectory }
-      if (missing.isNotEmpty()) {
-        put("model", "MISSING: ${dir.path} has no ${missing.joinToString()}; adb push $MODEL ${dir.parent}/")
+      val files = context.getExternalFilesDir(null)
+      val dir = MODELS.map { File(files, it) }.firstOrNull { File(it, "am").isDirectory && File(it, "conf").isDirectory }
+      if (dir == null) {
+        put("model", "MISSING: push one of ${MODELS.joinToString()} to $files/")
         return@section
       }
       val rule = VoskWake.heyMuse()
@@ -53,7 +53,7 @@ internal fun voskCheck(context: Context, report: Report, prompt: (String) -> Uni
         val rec = Recognizer(model, 16_000f, rule.grammarJson)
         rec.setWords(true)
         warmUp(rec)
-        put("model", "$MODEL loadMs=$loadMs recognizerMs=${(System.nanoTime() - recStart) / 1_000_000} " +
+        put("model", "${dir.name} loadMs=$loadMs recognizerMs=${(System.nanoTime() - recStart) / 1_000_000} " +
             "grammar=${rule.grammar.size} words")
         put("memoryAfterLoad", memory.now())
         try {
@@ -80,8 +80,11 @@ private fun Report.Section.listen(context: Context, rec: Recognizer, rule: VoskW
       return
     }
     for (s in 5 downTo 1) {
-      prompt("Say \"Hey Muse\" now and then for $SECONDS s, from across the room. Starting in $s")
+      prompt("Follow the instructions on screen for $SECONDS s. Starting in $s")
       Thread.sleep(1_000)
+    }
+    SCRIPT.forEachIndexed { i, w ->
+      put("script$i", String.format(Locale.ROOT, "%d-%d s %s", w.from, w.from + WINDOW, w.label))
     }
     mic.startRecording()
     if (mic.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
@@ -162,8 +165,9 @@ private fun Report.Section.listen(context: Context, rec: Recognizer, rule: VoskW
       if (final) onFinal(rec.result)
       val now = System.currentTimeMillis()
       if (now >= nextPrompt) {
-        prompt("Say \"Hey Muse\". ${(deadline - now) / 1000} s left, ${wakes.size} wakes" +
-            (wakes.lastOrNull()?.let { ", last $it" } ?: ""))
+        val elapsed = ((now - (deadline - SECONDS * 1000L)) / 1000).toInt()
+        val window = SCRIPT.getOrNull(elapsed / WINDOW)
+        prompt((window?.instruction ?: "Done") + "\n${WINDOW - elapsed % WINDOW} s   ·   ${wakes.size} wakes so far")
         nextPrompt = now + 1_000
       }
     }
@@ -222,7 +226,22 @@ private class Memory {
   fun peak() = "javaHeap=${peakJava / MB} MB nativeHeap=${peakNative / MB} MB (sampled every chunk)"
 }
 
-private const val MODEL = "vosk-model-en-us-0.22-lgraph"
-private const val SECONDS = 120
+// The first one pushed to the probe's files dir is used, so the small model can be tried by pushing it.
+private val MODELS = listOf("vosk-model-small-en-us-0.15", "vosk-model-en-us-0.22-lgraph")
+
+private class Window(val from: Int, val label: String, val instruction: String)
+
+// Alternating windows give each run its own labels: a wake inside an "attempt" window is a hit, one
+// inside a "talk" window is a false alarm. tools/wakeeval reads the script lines from the report.
+private const val WINDOW = 8
+private val SCRIPT =
+    listOf("close", "talk", "middle of the room", "talk or TV", "across the room", "talk, say music or news",
+        "close", "talk or TV", "across the room", "talk", "middle of the room", "talk, say hey you", "across the room",
+        "talk or TV", "close")
+        .mapIndexed { i, where ->
+          if (i % 2 == 0) Window(i * WINDOW, "attempt $where", "Say \"Hey Muse\" ONCE, $where")
+          else Window(i * WINDOW, "no-wake $where", "Don't say it. ${where.replaceFirstChar(Char::uppercase)}")
+        }
+private val SECONDS = SCRIPT.size * WINDOW
 private const val CHUNK = 1_600
 private const val MB = 1024 * 1024
