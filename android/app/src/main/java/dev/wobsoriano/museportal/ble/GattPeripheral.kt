@@ -2,23 +2,21 @@ package dev.wobsoriano.museportal.ble
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothGattServer
-import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
-import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
-import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.le.AdvertisingSetParameters
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.IBinder
 import android.os.ParcelUuid
 import android.util.Log
+import dev.wobsoriano.museportal.ble.gatt.DirectGatt
 import dev.wobsoriano.museportal.protocol.Bytes
 import dev.wobsoriano.museportal.protocol.Command
 import dev.wobsoriano.museportal.protocol.Event
@@ -27,26 +25,28 @@ import java.util.UUID
 
 /**
  * The BLE side of gadget pairing: a GATT server with RX and TX and a connectable advertisement, as
- * `pair.advertise` describes. Everything runs on one handler thread; [emit] gets the commands to
- * send back to musecore.
+ * `pair.advertise` describes. It goes through [DirectGatt] because the Portal never gives apps
+ * GATT the usual way. Everything runs on one handler thread; [emit] gets the commands to send back
+ * to musecore.
  */
 @SuppressLint("MissingPermission")
-@Suppress("DEPRECATION")
 class GattPeripheral(private val context: Context, private val emit: (Command) -> Unit) {
   private val thread = HandlerThread("ble").apply { start() }
   private val handler = Handler(thread.looper)
-  private val manager = context.getSystemService(BluetoothManager::class.java)
-  private val adapter: BluetoothAdapter? = manager?.adapter
+  private val adapter: BluetoothAdapter? = context.getSystemService(BluetoothManager::class.java)?.adapter
 
-  private var server: BluetoothGattServer? = null
-  private var tx: BluetoothGattCharacteristic? = null
-  private var rxUuid: UUID? = null
-  private var central: BluetoothDevice? = null
+  private var gatt: DirectGatt? = null
+  private var serverIf = -1
+  private var rxHandle = -1
+  private var txHandle = -1
+  private var cccdHandle = -1
+  private var txValue = ByteArray(0)
+  private var cccdValue = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
+  private var central: String? = null
   private var mtu = 0
-  private var advertising: AdvertiseCallback? = null
+  private var advertising: IBinder? = null
   private var originalName: String? = null
   private val prepared = ByteArrayOutputStream()
-  private var serviceAdded: ((Boolean) -> Unit)? = null
   // A newer pair.advertise or pair.unadvertise cancels the steps still waiting from an older one.
   private var session = 0
 
@@ -62,7 +62,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
 
   fun notify(packets: List<Bytes>) = handler.post { queue.enqueue(packets.map { it.array }) }
 
-  fun disconnect() = handler.post { central?.let { server?.cancelConnection(it) } }
+  fun disconnect() = handler.post { central?.let { address -> gatt?.serverDisconnect(serverIf, address) } }
 
   fun close() {
     handler.post {
@@ -74,6 +74,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
   private fun start(spec: Event.PairAdvertise) {
     teardown()
     val mySession = ++session
+    if (Build.VERSION.SDK_INT != Build.VERSION_CODES.P) return fail("pairing needs Android 9")
     val adapter = adapter ?: return fail("no Bluetooth adapter")
     if (!adapter.isEnabled) {
       Log.i(TAG, "enabling Bluetooth")
@@ -85,41 +86,145 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
   }
 
   private fun openServer(mySession: Int, spec: Event.PairAdvertise) {
-    val service = UUID.fromString(spec.service)
+    val gatt = DirectGatt.connect(context) ?: return fail("could not reach the Bluetooth GATT service")
+    if (mySession != session) return gatt.close()
+    this.gatt = gatt
     val rx = UUID.fromString(spec.rx)
-    val txUuid = UUID.fromString(spec.tx)
-    val server =
-        manager?.openGattServer(context, callback) ?: return fail("could not open the GATT server")
-    this.server = server
-    rxUuid = rx
-    val gattService = BluetoothGattService(service, BluetoothGattService.SERVICE_TYPE_PRIMARY)
-    gattService.addCharacteristic(
+    val tx = UUID.fromString(spec.tx)
+    val service = BluetoothGattService(UUID.fromString(spec.service), BluetoothGattService.SERVICE_TYPE_PRIMARY)
+    service.addCharacteristic(
         BluetoothGattCharacteristic(
             rx,
-            BluetoothGattCharacteristic.PROPERTY_WRITE or
-                BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+            BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
             BluetoothGattCharacteristic.PERMISSION_WRITE))
-    val txChar =
+    service.addCharacteristic(
         BluetoothGattCharacteristic(
-                txUuid,
+                tx,
                 BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
                 BluetoothGattCharacteristic.PERMISSION_READ)
             .apply {
               addDescriptor(
                   BluetoothGattDescriptor(
-                      CCCD,
-                      BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE))
-            }
-    gattService.addCharacteristic(txChar)
-    tx = txChar
-    serviceAdded = { ok ->
-      if (mySession != session) Unit
-      else if (!ok) fail("could not add the GATT service")
-      else setNameThenAdvertise(mySession, spec)
-    }
-    if (!server.addService(gattService)) fail("could not add the GATT service")
-  }
+                      CCCD, BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE))
+            })
 
+    val events =
+        object : DirectGatt.ServerEvents {
+          override fun onServerRegistered(status: Int, serverIf: Int) {
+            handler.post {
+              when {
+                mySession != session -> runCatching { gatt.unregisterServer(serverIf) }
+                status != BluetoothGatt.GATT_SUCCESS -> fail("could not open the GATT server ($status)")
+                else -> {
+                  this@GattPeripheral.serverIf = serverIf
+                  gatt.addService(serverIf, service)
+                }
+              }
+            }
+          }
+
+          override fun onServiceAdded(status: Int, service: BluetoothGattService?) {
+            handler.post {
+              if (mySession != session) return@post
+              val rxChar = service?.getCharacteristic(rx)
+              val txChar = service?.getCharacteristic(tx)
+              if (status != BluetoothGatt.GATT_SUCCESS || rxChar == null || txChar == null) {
+                return@post fail("could not add the GATT service ($status)")
+              }
+              rxHandle = rxChar.instanceId
+              txHandle = txChar.instanceId
+              // TX's only descriptor gets the handle after TX's value; its own id isn't public API.
+              cccdHandle = txHandle + 1
+              setNameThenAdvertise(mySession, spec)
+            }
+          }
+
+          override fun onConnectionState(status: Int, serverIf: Int, connected: Boolean, address: String) {
+            handler.post {
+              if (mySession != session) return@post
+              if (connected) {
+                Log.i(TAG, "central connected: $address")
+                central = address
+                mtu = 0
+                emit(Command.BleConnected(address))
+              } else if (address == central) {
+                Log.i(TAG, "central disconnected: $address")
+                central = null
+                mtu = 0
+                cccdValue = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
+                queue.clear()
+                prepared.reset()
+                emit(Command.BleDisconnected)
+              }
+            }
+          }
+
+          override fun onMtuChanged(address: String, mtu: Int) {
+            handler.post { if (mySession == session) this@GattPeripheral.mtu = mtu }
+          }
+
+          override fun onReadRequest(address: String, requestId: Int, offset: Int, handle: Int) {
+            handler.post {
+              if (mySession != session) return@post
+              val value =
+                  when (handle) {
+                    txHandle -> txValue
+                    cccdHandle -> cccdValue
+                    else -> ByteArray(0)
+                  }
+              val slice = if (offset < value.size) value.copyOfRange(offset, value.size) else ByteArray(0)
+              respond(address, requestId, BluetoothGatt.GATT_SUCCESS, offset, slice)
+            }
+          }
+
+          override fun onWriteRequest(
+              address: String,
+              requestId: Int,
+              offset: Int,
+              prepared: Boolean,
+              responseNeeded: Boolean,
+              handle: Int,
+              value: ByteArray,
+          ) {
+            handler.post {
+              if (mySession != session) return@post
+              val allowed = handle == rxHandle || handle == cccdHandle
+              if (responseNeeded) {
+                respond(
+                    address,
+                    requestId,
+                    if (allowed) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_WRITE_NOT_PERMITTED,
+                    offset,
+                    value)
+              }
+              when (handle) {
+                cccdHandle -> cccdValue = value
+                rxHandle ->
+                    if (prepared) this@GattPeripheral.prepared.write(value)
+                    else emit(Command.BleWrite(Bytes(value), mtu))
+              }
+            }
+          }
+
+          override fun onExecuteWrite(address: String, requestId: Int, execute: Boolean) {
+            handler.post {
+              if (mySession != session) return@post
+              respond(address, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+              if (execute && prepared.size() > 0) emit(Command.BleWrite(Bytes(prepared.toByteArray()), mtu))
+              prepared.reset()
+            }
+          }
+
+          override fun onNotificationSent(address: String, status: Int) {
+            handler.post {
+              if (mySession != session) return@post
+              if (status != BluetoothGatt.GATT_SUCCESS) Log.w(TAG, "notification status $status")
+              queue.onSent()
+            }
+          }
+        }
+    gatt.registerServer(UUID.randomUUID(), DirectGatt.serverCallback(events))
+  }
 
   // The scan response can only carry the adapter's own name, so the adapter is renamed while
   // pairing and restored afterwards.
@@ -131,18 +236,19 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
     }
     awaitThen(mySession, { adapter.name == spec.name }, 3_000, null) {
       if (adapter.name != spec.name) Log.w(TAG, "adapter name is still ${adapter.name}")
-      startAdvertising(spec)
+      startAdvertising(mySession, spec)
     }
   }
 
-  private fun startAdvertising(spec: Event.PairAdvertise) {
-    val advertiser = adapter?.bluetoothLeAdvertiser ?: return fail("this device cannot advertise")
-    val settings =
-        AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+  private fun startAdvertising(mySession: Int, spec: Event.PairAdvertise) {
+    val gatt = gatt ?: return
+    val parameters =
+        AdvertisingSetParameters.Builder()
+            .setLegacyMode(true)
             .setConnectable(true)
-            .setTimeout(0)
+            .setScannable(true)
+            .setInterval(AdvertisingSetParameters.INTERVAL_LOW)
+            .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
             .build()
     val data =
         AdvertiseData.Builder()
@@ -152,19 +258,29 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
             .setIncludeTxPowerLevel(false)
             .build()
     val scanResponse = AdvertiseData.Builder().setIncludeDeviceName(true).build()
-    val cb =
-        object : AdvertiseCallback() {
-          override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            Log.i(TAG, "advertising as ${spec.name}")
-            emit(Command.BleAdvertising(ok = true))
-          }
+    val callback =
+        DirectGatt.advertisingCallback(
+            object : DirectGatt.AdvertisingEvents {
+              override fun onStarted(advertiserId: Int, txPower: Int, status: Int) {
+                handler.post {
+                  if (mySession != session) return@post
+                  if (status == 0) {
+                    Log.i(TAG, "advertising as ${spec.name}")
+                    emit(Command.BleAdvertising(ok = true))
+                  } else {
+                    advertising = null
+                    fail("advertising failed: ${advertiseError(status)}")
+                  }
+                }
+              }
+            })
+    advertising = callback
+    gatt.startAdvertisingSet(parameters, data, scanResponse, callback)
+  }
 
-          override fun onStartFailure(errorCode: Int) {
-            handler.post { fail("advertising failed: ${advertiseError(errorCode)}") }
-          }
-        }
-    advertising = cb
-    advertiser.startAdvertising(settings, data, scanResponse, cb)
+  private fun respond(address: String, requestId: Int, status: Int, offset: Int, value: ByteArray?) {
+    runCatching { gatt?.sendResponse(serverIf, address, requestId, status, offset, value) }
+        .onFailure { Log.w(TAG, "sendResponse failed", it) }
   }
 
   private fun fail(error: String) {
@@ -175,16 +291,22 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
 
   private fun teardown() {
     session++
-    serviceAdded = null
     queue.clear()
-    advertising?.let { cb -> runCatching { adapter?.bluetoothLeAdvertiser?.stopAdvertising(cb) } }
+    gatt?.let { gatt ->
+      advertising?.let { cb -> runCatching { gatt.stopAdvertisingSet(cb) } }
+      central?.let { address -> runCatching { gatt.serverDisconnect(serverIf, address) } }
+      if (serverIf >= 0) runCatching { gatt.unregisterServer(serverIf) }
+      gatt.close()
+    }
+    gatt = null
     advertising = null
-    central?.let { device -> server?.cancelConnection(device) }
     central = null
-    server?.close()
-    server = null
-    tx = null
-    rxUuid = null
+    serverIf = -1
+    rxHandle = -1
+    txHandle = -1
+    cccdHandle = -1
+    txValue = ByteArray(0)
+    cccdValue = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
     mtu = 0
     prepared.reset()
     originalName?.let { name -> adapter?.name = name }
@@ -206,144 +328,30 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
   }
 
   private fun notifyNow(packet: ByteArray): Boolean {
-    val server = server
-    val device = central
-    val tx = tx
-    if (server == null || device == null || tx == null) {
+    val gatt = gatt
+    val address = central
+    if (gatt == null || address == null || txHandle < 0) {
       Log.w(TAG, "notify with no central connected; dropping")
       return false
     }
-    tx.value = packet
-    val ok = server.notifyCharacteristicChanged(device, tx, false)
-    if (!ok) Log.w(TAG, "notifyCharacteristicChanged refused a ${packet.size} byte packet")
-    return ok
+    txValue = packet
+    return runCatching { gatt.sendNotification(serverIf, address, txHandle, false, packet) }
+        .onFailure { Log.w(TAG, "notification of a ${packet.size} byte packet failed", it) }
+        .isSuccess
   }
-
-  private val callback =
-      object : BluetoothGattServerCallback() {
-        override fun onServiceAdded(status: Int, service: BluetoothGattService) {
-          handler.post { serviceAdded?.invoke(status == BluetoothGatt.GATT_SUCCESS) }
-        }
-
-        override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-          handler.post {
-            when (newState) {
-              BluetoothProfile.STATE_CONNECTED -> {
-                Log.i(TAG, "central connected: ${device.address}")
-                central = device
-                mtu = 0
-                emit(Command.BleConnected(device.address))
-              }
-              BluetoothProfile.STATE_DISCONNECTED ->
-                  if (device == central) {
-                    Log.i(TAG, "central disconnected: ${device.address}")
-                    central = null
-                    mtu = 0
-                    queue.clear()
-                    prepared.reset()
-                    emit(Command.BleDisconnected)
-                  }
-            }
-          }
-        }
-
-        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
-          handler.post { this@GattPeripheral.mtu = mtu }
-        }
-
-        override fun onCharacteristicWriteRequest(
-            device: BluetoothDevice,
-            requestId: Int,
-            characteristic: BluetoothGattCharacteristic,
-            preparedWrite: Boolean,
-            responseNeeded: Boolean,
-            offset: Int,
-            value: ByteArray?,
-        ) {
-          val bytes = value ?: ByteArray(0)
-          handler.post {
-            val isRx = characteristic.uuid == rxUuid
-            if (responseNeeded) {
-              server?.sendResponse(
-                  device,
-                  requestId,
-                  if (isRx) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_WRITE_NOT_PERMITTED,
-                  offset,
-                  bytes)
-            }
-            if (!isRx) return@post
-            if (preparedWrite) prepared.write(bytes)
-            else emit(Command.BleWrite(Bytes(bytes), mtu))
-          }
-        }
-
-        override fun onExecuteWrite(device: BluetoothDevice, requestId: Int, execute: Boolean) {
-          handler.post {
-            server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            if (execute && prepared.size() > 0) emit(Command.BleWrite(Bytes(prepared.toByteArray()), mtu))
-            prepared.reset()
-          }
-        }
-
-        override fun onCharacteristicReadRequest(
-            device: BluetoothDevice,
-            requestId: Int,
-            offset: Int,
-            characteristic: BluetoothGattCharacteristic,
-        ) {
-          handler.post {
-            val value = characteristic.value ?: ByteArray(0)
-            val slice = if (offset < value.size) value.copyOfRange(offset, value.size) else ByteArray(0)
-            server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, slice)
-          }
-        }
-
-        override fun onDescriptorWriteRequest(
-            device: BluetoothDevice,
-            requestId: Int,
-            descriptor: BluetoothGattDescriptor,
-            preparedWrite: Boolean,
-            responseNeeded: Boolean,
-            offset: Int,
-            value: ByteArray?,
-        ) {
-          handler.post {
-            descriptor.value = value
-            if (responseNeeded) server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
-          }
-        }
-
-        override fun onDescriptorReadRequest(
-            device: BluetoothDevice,
-            requestId: Int,
-            offset: Int,
-            descriptor: BluetoothGattDescriptor,
-        ) {
-          handler.post {
-            val value = descriptor.value ?: BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-            server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
-          }
-        }
-
-        override fun onNotificationSent(device: BluetoothDevice, status: Int) {
-          handler.post {
-            if (status != BluetoothGatt.GATT_SUCCESS) Log.w(TAG, "notification status $status")
-            queue.onSent()
-          }
-        }
-      }
 
   companion object {
     private const val TAG = "MuseBle"
     private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
+    // AdvertisingSetCallback status codes, which match AdvertiseCallback's.
     fun advertiseError(code: Int) =
         when (code) {
-          AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE -> "data too large"
-          AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "too many advertisers"
-          AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED -> "already started"
-          AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR -> "internal error"
-          AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "feature unsupported"
+          1 -> "data too large"
+          2 -> "too many advertisers"
+          3 -> "already started"
+          4 -> "internal error"
+          5 -> "feature unsupported"
           else -> "error $code"
         }
   }

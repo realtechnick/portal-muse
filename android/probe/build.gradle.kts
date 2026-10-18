@@ -21,6 +21,7 @@ android {
     targetCompatibility = JavaVersion.VERSION_17
   }
   buildFeatures { compose = true }
+  sourceSets["main"].kotlin.srcDir("../app/src/main/java/dev/wobsoriano/museportal/ble/gatt")
 }
 
 dependencies {

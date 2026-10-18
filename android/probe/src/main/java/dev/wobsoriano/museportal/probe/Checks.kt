@@ -3,11 +3,15 @@ package dev.wobsoriano.museportal.probe
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.ActivityManager
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.le.AdvertisingSetParameters
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -25,6 +29,7 @@ import android.os.Looper
 import android.os.ParcelUuid
 import android.os.PowerManager
 import android.speech.tts.TextToSpeech
+import dev.wobsoriano.museportal.ble.gatt.DirectGatt
 import java.io.File
 import java.net.InetAddress
 import java.util.UUID
@@ -45,18 +50,23 @@ class Checks(
 ) {
   private val main = Handler(Looper.getMainLooper())
 
-  fun runAll() {
-    device()
-    permissions()
-    packages()
-    home()
-    tts()
-    runtime()
-    network()
-    exec()
-    bluetooth()
-    microphones()
-  }
+  private val checks =
+      listOf(
+          "device" to ::device,
+          "permissions" to ::permissions,
+          "packages" to ::packages,
+          "home" to ::home,
+          "tts" to ::tts,
+          "runtime" to ::runtime,
+          "network" to ::network,
+          "exec" to ::exec,
+          "bluetooth" to ::bluetooth,
+          "directGatt" to ::directGatt,
+          "mic" to ::microphones,
+      )
+
+  /** Runs every check, or only the one named [only] (`adb shell am start ... --es only directGatt`). */
+  fun run(only: String?) = checks.filter { only == null || it.first == only }.forEach { it.second() }
 
   private fun device() =
       report.section("device") {
@@ -282,6 +292,120 @@ class Checks(
         }
       }
 
+  // Binds Android's GATT service directly (see DirectGatt), serves the Muse pairing service and
+  // advertises it for 60 s so a phone can find and connect to it.
+  private fun directGatt() =
+      report.section("directGatt") {
+        val gatt = DirectGatt.connect(context) ?: return@section put("bind", "failed")
+        put("bind", "ok")
+        val adapter = context.getSystemService(BluetoothManager::class.java).adapter
+        val originalName = adapter.name
+        var server = -1
+        val registered = CountDownLatch(1)
+        val added = CountDownLatch(1)
+        val started = CountDownLatch(1)
+        val events =
+            object : DirectGatt.ServerEvents {
+              override fun onServerRegistered(status: Int, serverIf: Int) {
+                put("serverRegistered", "status=$status serverIf=$serverIf")
+                if (status == 0) server = serverIf
+                registered.countDown()
+              }
+
+              override fun onServiceAdded(status: Int, service: BluetoothGattService?) {
+                val handles = service?.characteristics?.joinToString { "${it.uuid}=${it.instanceId}" }
+                put("serviceAdded", "status=$status handles=[$handles]")
+                added.countDown()
+              }
+
+              override fun onConnectionState(status: Int, serverIf: Int, connected: Boolean, address: String) =
+                  put("connection", "status=$status connected=$connected address=$address")
+
+              override fun onMtuChanged(address: String, mtu: Int) = put("mtu", mtu)
+
+              override fun onReadRequest(address: String, requestId: Int, offset: Int, handle: Int) {
+                put("read", "handle=$handle offset=$offset")
+                gatt.sendResponse(server, address, requestId, 0, offset, ByteArray(0))
+              }
+
+              override fun onWriteRequest(
+                  address: String,
+                  requestId: Int,
+                  offset: Int,
+                  prepared: Boolean,
+                  responseNeeded: Boolean,
+                  handle: Int,
+                  value: ByteArray,
+              ) {
+                put("write", "handle=$handle bytes=${value.size} prepared=$prepared")
+                if (responseNeeded) gatt.sendResponse(server, address, requestId, 0, offset, value)
+              }
+            }
+        val advertising =
+            DirectGatt.advertisingCallback(
+                object : DirectGatt.AdvertisingEvents {
+                  override fun onStarted(advertiserId: Int, txPower: Int, status: Int) {
+                    put("advertisingStarted", "status=$status advertiserId=$advertiserId txPower=$txPower")
+                    started.countDown()
+                  }
+                })
+        try {
+          gatt.registerServer(UUID.randomUUID(), DirectGatt.serverCallback(events))
+          if (!registered.await(5, TimeUnit.SECONDS)) return@section put("serverRegistered", "no callback within 5 s")
+          if (server < 0) return@section
+
+          val service = BluetoothGattService(MUSE_SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY)
+          service.addCharacteristic(
+              BluetoothGattCharacteristic(
+                  MUSE_RX,
+                  BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+                  BluetoothGattCharacteristic.PERMISSION_WRITE))
+          service.addCharacteristic(
+              BluetoothGattCharacteristic(
+                      MUSE_TX,
+                      BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+                      BluetoothGattCharacteristic.PERMISSION_READ)
+                  .apply {
+                    addDescriptor(
+                        BluetoothGattDescriptor(
+                            CCCD, BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE))
+                  })
+          gatt.addService(server, service)
+          if (!added.await(5, TimeUnit.SECONDS)) put("serviceAdded", "no callback within 5 s")
+
+          val name = "MuseProbe${(1000..9999).random()}"
+          adapter.setName(name)
+          waitFor(3_000) { adapter.name == name }
+          val parameters =
+              AdvertisingSetParameters.Builder()
+                  .setLegacyMode(true)
+                  .setConnectable(true)
+                  .setScannable(true)
+                  .setInterval(AdvertisingSetParameters.INTERVAL_LOW)
+                  .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
+                  .build()
+          val data =
+              AdvertiseData.Builder()
+                  .addServiceUuid(ParcelUuid(MUSE_SERVICE))
+                  .addManufacturerData(0xFFFF, byteArrayOf(1, 2, 3, 4))
+                  .build()
+          val scanResponse = AdvertiseData.Builder().setIncludeDeviceName(true).build()
+          gatt.startAdvertisingSet(parameters, data, scanResponse, advertising)
+          if (!started.await(5, TimeUnit.SECONDS)) return@section put("advertisingStarted", "no callback within 5 s")
+          put("advertisingAs", name)
+          for (left in 60 downTo 1) {
+            prompt("Advertising as $name for $left s")
+            Thread.sleep(1_000)
+          }
+        } finally {
+          runCatching { gatt.stopAdvertisingSet(advertising) }
+          if (server >= 0) runCatching { gatt.unregisterServer(server) }
+          adapter.setName(originalName)
+          gatt.close()
+          prompt("")
+        }
+      }
+
   private fun microphones() =
       report.section("mic") {
         val am = context.getSystemService(AudioManager::class.java)
@@ -374,6 +498,10 @@ class Checks(
   }
 
   private companion object {
+    val MUSE_SERVICE: UUID = UUID.fromString("7fdd3d1c-38ea-46cf-8b46-314ecf5f240c")
+    val MUSE_RX: UUID = UUID.fromString("4d593029-28a2-4a6e-a1f0-3c2d5e8f9b01")
+    val MUSE_TX: UUID = UUID.fromString("d75dc4ca-7b2b-4e9c-8f0a-1d2e3f4a5b6c")
+    val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     val TEST_SERVICE: UUID = UUID.fromString("6d757365-7072-6f62-6500-000000000001")
 
     val SOURCES =
