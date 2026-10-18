@@ -41,11 +41,17 @@ computer. Then:
 adb install -g android/probe/build/outputs/apk/debug/probe-debug.apk
 adb shell am start -n dev.wobsoriano.museportal.probe/.ProbeActivity
 adb logcat -s MuseProbe        # the day-one report
+adb shell am start -n dev.wobsoriano.museportal.probe/.ProbeActivity -S --es only wake   # a minute of "Hey Muse"
+adb push vosk-model-en-us-0.22-lgraph /sdcard/Android/data/dev.wobsoriano.museportal.probe/files/
+adb shell am start -n dev.wobsoriano.museportal.probe/.ProbeActivity -S --es only vosk   # two minutes of "Hey Muse" on Vosk
 adb install -g android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 The app keeps its pairing in `muse.json` in its files directory, in the format the Go core wrote,
 so a Portal paired by an earlier build stays paired.
+
+The Vosk check saves its audio as `files/vosk.wav`. `tools/wakeeval/eval.py` replays a WAV through the
+same rule on the PC and scores it against a file of attempt times.
 
 ## Licences
 

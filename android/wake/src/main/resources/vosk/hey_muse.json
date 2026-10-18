@@ -1,0 +1,12 @@
+{
+  "model": "vosk-model-en-us-0.22-lgraph",
+  "phrase": [
+    { "word": "hey", "minConf": 0.95 },
+    { "word": "muse", "minConf": 0.85 }
+  ],
+  "grammar": [
+    "hey muse", "hey", "muse", "the", "a", "it", "is", "news", "music", "views", "reviews", "use",
+    "amuse", "moves", "hey you", "may", "move", "mews", "hate", "hello", "why", "not", "no", "yes",
+    "okay", "what", "[unk]"
+  ]
+}
