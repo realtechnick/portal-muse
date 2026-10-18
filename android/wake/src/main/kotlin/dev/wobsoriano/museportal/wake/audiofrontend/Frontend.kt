@@ -31,6 +31,7 @@ class Frontend(val cfg: Config) {
   val stepSize = cfg.sampleRate * cfg.stepSizeMs / 1000
   private val fftSize = nextPow2(windowSize)
   private val hannWindow = makeHannWindow(windowSize)
+  private val twiddles = fftTwiddles(fftSize)
   private val melFilters = makeMelFilterbank(cfg.numChannels, fftSize, cfg.sampleRate, cfg.lowerFreq, cfg.upperFreq)
   private val noiseEst = DoubleArray(cfg.numChannels)
   private var firstFrame = true
@@ -69,7 +70,7 @@ class Frontend(val cfg: Config) {
     }
 
     // 2. FFT, then the power spectrum
-    realFFT(re, im, fftSize)
+    realFFT(re, im, fftSize, twiddles)
     for (b in energy.indices) energy[b] = re[b] * re[b] + im[b] * im[b]
 
     // 3. Mel filterbank

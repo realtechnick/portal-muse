@@ -15,11 +15,25 @@ internal fun nextPow2(n: Int): Int {
 /** A Hann window of the given size, the "periodic" variant: 0.5 - 0.5*cos(2*pi*i/N). */
 internal fun makeHannWindow(n: Int): DoubleArray = DoubleArray(n) { 0.5 - 0.5 * StrictMath.cos(2 * Math.PI * it.toDouble() / n.toDouble()) }
 
+/** The butterfly twiddle of each FFT stage of size 2, 4, .. n, as cos and sin of -2*pi/size. */
+internal fun fftTwiddles(n: Int): DoubleArray {
+  val out = ArrayList<Double>()
+  var size = 2
+  while (size <= n) {
+    val angle = -2 * Math.PI / size.toDouble()
+    out += StrictMath.cos(angle)
+    out += StrictMath.sin(angle)
+    size = size shl 1
+  }
+  return out.toDoubleArray()
+}
+
 /**
  * A radix-2 decimation-in-time FFT of a real signal of length n (a power of 2), in place: [re]
  * holds the signal and [im] must be zero on entry. Bins 0..n/2 of the result are the real FFT.
+ * [twiddles] is [fftTwiddles] of n.
  */
-internal fun realFFT(re: DoubleArray, im: DoubleArray, n: Int) {
+internal fun realFFT(re: DoubleArray, im: DoubleArray, n: Int, twiddles: DoubleArray) {
   // Bit-reversal permutation
   var j = 0
   for (i in 0 until n) {
@@ -41,11 +55,12 @@ internal fun realFFT(re: DoubleArray, im: DoubleArray, n: Int) {
 
   // FFT butterfly
   var size = 2
+  var stage = 0
   while (size <= n) {
     val half = size shr 1
-    val angle = -2 * Math.PI / size.toDouble()
-    val wRe = StrictMath.cos(angle)
-    val wIm = StrictMath.sin(angle)
+    val wRe = twiddles[stage * 2]
+    val wIm = twiddles[stage * 2 + 1]
+    stage++
     var start = 0
     while (start < n) {
       var uRe = 1.0
