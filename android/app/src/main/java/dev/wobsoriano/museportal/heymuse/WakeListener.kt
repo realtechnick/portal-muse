@@ -297,6 +297,33 @@ class WakeListener(private val context: Context, private val host: WakeHost) {
     idle.flushed(samples / 16)
   }
 
+  private var levelPeak = 0
+  private var levelFrom = 0L
+  private var zeroSamples = 0L
+  private var silenceLimit = SILENCE_REOPEN
+
+  /**
+   * The Portal's audio policy silences an app's recording when its screen leaves the foreground, and
+   * the recording then reads exact zeros, which no real room produces. A mic opened again in the
+   * background is heard, so after [silenceLimit] of zeros the mic is reopened. A reopen that is
+   * still silent doubles the wait, so a mic that stays silenced isn't reopened in a tight loop.
+   */
+  private fun reopenedForSilence(chunkPeak: Int, n: Int): Boolean {
+    if (chunkPeak > 0) {
+      zeroSamples = 0
+      silenceLimit = SILENCE_REOPEN
+      return false
+    }
+    zeroSamples += n
+    if (zeroSamples < silenceLimit) return false
+    Log.i(TAG, "the mic has read exact silence for ${zeroSamples / 16_000} s; reopening it")
+    zeroSamples = 0
+    silenceLimit = minOf(silenceLimit * 2, SILENCE_REOPEN_MAX)
+    closeMic()
+    reconcile()
+    return true
+  }
+
   /** Decodes one chunk of audio, and turns a wake into an ask. */
   private fun listen() {
     val rec = mic ?: return
@@ -307,6 +334,16 @@ class WakeListener(private val context: Context, private val host: WakeHost) {
       return
     }
     samples += n
+    var chunkPeak = 0
+    for (i in 0 until n) chunkPeak = maxOf(chunkPeak, kotlin.math.abs(chunk[i].toInt()))
+    levelPeak = maxOf(levelPeak, chunkPeak)
+    if (reopenedForSilence(chunkPeak, n)) return
+    if (samples - levelFrom >= LEVEL_EVERY) {
+      // A level of 0 means the system is handing us silence, as Android does to a mic it has idled.
+      Log.i(TAG, "mic peak $levelPeak over ${(samples - levelFrom) / 16_000} s")
+      levelPeak = 0
+      levelFrom = samples
+    }
     val action = idle.decide(samples / 16) { JSONObject(r.partialResult).optString("partial").isNotBlank() }
     if (action != IdleReset.Action.KEEP) restart(r)
     if (!r.acceptWaveForm(chunk, n)) return
@@ -340,6 +377,9 @@ class WakeListener(private val context: Context, private val host: WakeHost) {
 
   companion object {
     private const val TAG = "MuseWake"
+    private const val LEVEL_EVERY = 60 * 16_000L
+    private const val SILENCE_REOPEN = 2 * 16_000L
+    private const val SILENCE_REOPEN_MAX = 64 * 16_000L
     private const val RATE = 16_000
     private const val CHUNK = RATE / 10
     /** Four seconds: room for the audio that arrives while the model loads. */
