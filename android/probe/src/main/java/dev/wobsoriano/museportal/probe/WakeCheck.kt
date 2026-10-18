@@ -90,6 +90,7 @@ internal fun wakeCheck(context: Context, report: Report, prompt: (String) -> Uni
         }
 
         val buf = ShortArray(step)
+        val pcm = java.io.ByteArrayOutputStream(SECONDS * 32_000)
         var steps = 0L
         var spentNs = 0L
         var worstNs = 0L
@@ -108,7 +109,11 @@ internal fun wakeCheck(context: Context, report: Report, prompt: (String) -> Uni
             }
             continue
           }
-          for (i in 0 until n) loudest = maxOf(loudest, abs(buf[i].toInt()))
+          for (i in 0 until n) {
+            loudest = maxOf(loudest, abs(buf[i].toInt()))
+            pcm.write(buf[i].toInt() and 0xff)
+            pcm.write(buf[i].toInt() shr 8 and 0xff)
+          }
           val allocBefore = Debug.getThreadAllocSize()
           val t = System.nanoTime()
           det.processAudio(buf, 0, n)
@@ -137,6 +142,8 @@ internal fun wakeCheck(context: Context, report: Report, prompt: (String) -> Uni
         put("allocatedPerStep", if (steps == 0L) "no steps" else "%.1f bytes".format(allocBytes.toDouble() / steps))
         put("audio", "samples=$samples seconds=%.1f peak=%.1f dBFS routed=%s".format(
             samples / 16_000.0, 20 * log10(maxOf(loudest, 1) / 32768.0), rec.routedDevice?.let { "type${it.type}/${it.productName}" } ?: "unknown"))
+        // The recording, so a run can be replayed through the Go and Kotlin detectors on the PC.
+        get("wav") { java.io.File(context.getExternalFilesDir(null), "wake.wav").apply { writeWav(this, pcm.toByteArray()) }.path }
       } finally {
         runCatching { rec.stop() }
         rec.release()
@@ -146,3 +153,14 @@ internal fun wakeCheck(context: Context, report: Report, prompt: (String) -> Uni
 
 private const val SECONDS = 60
 private const val NEVER_FIRES = 1.1
+
+private fun writeWav(file: java.io.File, pcm: ByteArray) {
+  val header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+  header.put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVE".toByteArray())
+  header.put("fmt ".toByteArray()).putInt(16).putShort(1).putShort(1).putInt(16_000).putInt(32_000).putShort(2).putShort(16)
+  header.put("data".toByteArray()).putInt(pcm.size)
+  file.outputStream().use {
+    it.write(header.array())
+    it.write(pcm)
+  }
+}
