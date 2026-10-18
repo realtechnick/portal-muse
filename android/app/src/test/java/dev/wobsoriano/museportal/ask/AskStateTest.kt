@@ -110,13 +110,13 @@ class AskStateTest {
   fun aQuestionFromMuseIsListenedToAfterItIsSpoken() {
     assertEquals(
         AskStep(AskState.Recording(followUp = true), AskEffect.ListenForReply),
-        answered("Do you want the forecast for tomorrow? ").next(AskInput.Spoken))
+        answered("Do you want the forecast for tomorrow? ").next(AskInput.Spoken()))
   }
 
   @Test
   fun aPlainAnswerEndsTheAskWhenSpoken() {
     val done = answered("It is not raining.")
-    assertEquals(AskStep(done), done.next(AskInput.Spoken))
+    assertEquals(AskStep(done), done.next(AskInput.Spoken()))
   }
 
   @Test
@@ -129,5 +129,25 @@ class AskStateTest {
   @Test
   fun aFollowUpReplyIsSentLikeAnyQuestion() {
     assertEquals(AskStep(AskState.Sending("a2")), AskState.Recording(0.3f, followUp = true).next(AskInput.Sent("a2")))
+  }
+
+  @Test
+  fun keepListeningHearsAReplyToAPlainAnswerToo() {
+    assertEquals(
+        AskStep(AskState.Recording(followUp = true), AskEffect.ListenForReply),
+        answered("It is not raining.").next(AskInput.Spoken(keepListening = true)))
+  }
+
+  @Test
+  fun aSettledAnswerOrFailureFadesToIdle() {
+    assertEquals(AskStep(AskState.Idle), answered("It is not raining.").next(AskInput.Expired))
+    assertEquals(AskStep(AskState.Idle), AskState.Failed("no").next(AskInput.Expired))
+  }
+
+  @Test
+  fun anAskStillUnderWayDoesNotExpire() {
+    val streaming = AskState.Answered("a1", "", "It is", complete = false)
+    assertEquals(AskStep(streaming), streaming.next(AskInput.Expired))
+    assertEquals(AskStep(AskState.Recording()), AskState.Recording().next(AskInput.Expired))
   }
 }

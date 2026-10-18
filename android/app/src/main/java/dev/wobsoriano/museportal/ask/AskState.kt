@@ -36,8 +36,11 @@ sealed interface AskInput {
 
   data class Reply(val reply: AskUpdate) : AskInput
 
-  /** The answer has finished being spoken. */
-  data object Spoken : AskInput
+  /** The answer has finished being spoken. [keepListening]: listen for a reply even to a plain answer. */
+  data class Spoken(val keepListening: Boolean = false) : AskInput
+
+  /** The answer or failure has been on screen long enough. */
+  data object Expired : AskInput
 }
 
 sealed interface AskEffect {
@@ -78,12 +81,14 @@ fun AskState.next(input: AskInput): AskStep =
               })
       is AskInput.Reply -> onReply(input.reply)
       // As hey-muse does on the Echo: an answer that ends in a question is listened to without a wake word.
-      AskInput.Spoken ->
-          if (this is AskState.Answered && complete && answer.trimEnd().endsWith("?")) {
+      is AskInput.Spoken ->
+          if (this is AskState.Answered && complete && (input.keepListening || answer.trimEnd().endsWith("?"))) {
             AskStep(AskState.Recording(followUp = true), AskEffect.ListenForReply)
           } else {
             AskStep(this)
           }
+      AskInput.Expired ->
+          AskStep(if (this is AskState.Failed || (this is AskState.Answered && complete)) AskState.Idle else this)
     }
 
 private fun AskState.onReply(reply: AskUpdate): AskStep {
