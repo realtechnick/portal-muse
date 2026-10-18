@@ -7,9 +7,9 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.wifi.WifiManager
 
-data class NetworkSnapshot(val ssid: String, val dns: List<String>)
+data class NetworkSnapshot(val ssid: String)
 
-/** The Wi-Fi network and DNS servers musecore needs in `config`; [onChange] fires when they move. */
+/** The Wi-Fi network the core needs in its config; [onChange] fires when it may have moved. */
 @SuppressLint("MissingPermission")
 @Suppress("DEPRECATION")
 class NetworkInfo(context: Context, private val onChange: () -> Unit) {
@@ -29,16 +29,7 @@ class NetworkInfo(context: Context, private val onChange: () -> Unit) {
 
   fun stop() = runCatching { connectivity.unregisterNetworkCallback(callback) }
 
-  fun snapshot(): NetworkSnapshot {
-    val dns =
-        runCatching {
-              connectivity.getLinkProperties(connectivity.activeNetwork)?.dnsServers.orEmpty().mapNotNull {
-                it.hostAddress
-              }
-            }
-            .getOrDefault(emptyList())
-    return NetworkSnapshot(ssid(), dns)
-  }
+  fun snapshot() = NetworkSnapshot(ssid())
 
   private fun ssid(): String {
     val raw = runCatching { wifi?.connectionInfo?.ssid }.getOrNull() ?: return ""

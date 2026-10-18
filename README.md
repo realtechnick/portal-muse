@@ -3,11 +3,16 @@
 Meta's Muse on a Meta Portal (first generation, Android 9), as a sideloaded Android app. No root:
 Portal's bootloader stays locked, and Meta's own ADB support is all it needs.
 
-- `core/` is the Go core, `musecore`. It holds the Muse client and the gadget pairing protocol,
-  copied from [hey-muse](https://github.com/wobsoriano/hey-muse), the TECHO5 fork that runs Muse on
-  Echo devices. It runs as a child process of the app.
-- `android/` is the app: the Bluetooth LE side of pairing, the microphone, playback and the screen.
-- [PROTOCOL.md](PROTOCOL.md) is how the two talk.
+- `android/muse` is the Muse library, plain Kotlin with no Android code, so its tests run on a PC. It
+  holds the Muse client and the gadget pairing protocol, ported to Kotlin from the Go core of
+  [hey-muse](https://github.com/wobsoriano/hey-muse), the TECHO5 fork that runs Muse on Echo devices.
+  `MuseCore` is the app's way in: config, pairing, BLE events and questions go in, and the
+  connection, pairing and reply status come out.
+- `android/app` is the app: the Bluetooth LE side of pairing, the microphone, playback and the
+  screen. It runs `MuseCore` in its own process.
+- `android/probe` is a separate app that reports what a Portal allows on day one.
+- `assets/wake` is the "Hey Muse" wake word model, for when the app listens for it.
+- `third_party/pico` is the SVOX Pico speech engine.
 
 ## Status
 
@@ -16,12 +21,16 @@ measured on the device.
 
 ## Build
 
-Needs Go, JDK 21 and the Android SDK (platform 35). On Windows, run the first step in Git Bash.
+You need JDK 21 and the Android SDK (platform 35).
 
 ```sh
-sh scripts/build-core.sh                      # musecore for arm64 (Portal) and x86_64 (emulator)
-android/gradlew -p android :app:assembleDebug :probe:assembleDebug :app:testDebugUnitTest
+android/gradlew -p android :muse:test :app:testDebugUnitTest :app:assembleDebug :probe:assembleDebug
 ```
+
+`:muse:test` includes the cross-language check: the Noise sessions, frames, chunks, pairing
+conversations and state files that the Go core wrote are committed under
+`android/muse/src/test/resources/vectors`, and the Kotlin code has to reproduce them byte for byte.
+That folder's README says how they were made.
 
 ## Install on a Portal
 
@@ -35,8 +44,12 @@ adb logcat -s MuseProbe        # the day-one report
 adb install -g android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+The app keeps its pairing in `muse.json` in its files directory, in the format the Go core wrote,
+so a Portal paired by an earlier build stays paired.
+
 ## Licences
 
-`core/internal/muse` is a modified port of Meta's Muse Gadget SDK (Apache 2.0, see its `LICENSE`).
-`core/pico` is SVOX Pico (Apache 2.0). The `hey_muse` wake word model and the rest of what came from
-hey-muse are MIT: `LICENSE.hey-muse`, `NOTICE.hey-muse`.
+`android/muse` is a modified port of Meta's Muse Gadget SDK (Apache 2.0, see its `LICENSE`), by way
+of hey-muse's Go port. Its test vectors in `android/muse/src/test/resources/pairing` are Meta's
+(Apache 2.0). `third_party/pico` is SVOX Pico (Apache 2.0). The `hey_muse` wake word model and the
+rest of what came from hey-muse are MIT: `LICENSE.hey-muse`, `NOTICE.hey-muse`.

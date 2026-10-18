@@ -48,9 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.wobsoriano.museportal.ask.AskState
-import dev.wobsoriano.museportal.core.CoreState
-import dev.wobsoriano.museportal.protocol.PairState
-import dev.wobsoriano.museportal.protocol.Phase
+import dev.wobsoriano.muse.Phase
+import dev.wobsoriano.muse.core.PairState
 
 class MainActivity : ComponentActivity() {
   private val permissions =
@@ -122,10 +121,8 @@ private fun statusLine(state: MuseState): Pair<String, Color> {
   val warn = Color(0xFFFFC66D)
   val bad = Color(0xFFFF6B6B)
   return when (val core = state.core) {
-    is CoreState.Missing -> "musecore is not in this build" to bad
-    is CoreState.Restarting -> "Muse stopped (exit ${core.exitCode}), restarting in ${core.inMs / 1000} s" to warn
+    is CoreState.Restarting -> "Muse stopped (${core.error}), restarting in ${core.inMs / 1000} s" to warn
     CoreState.Stopped -> "Stopped" to warn
-    CoreState.Starting -> "Starting" to warn
     CoreState.Running ->
         when (state.connection?.phase) {
           null -> "Starting" to warn

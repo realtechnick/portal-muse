@@ -16,21 +16,21 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.ParcelUuid
 import android.util.Log
+import dev.wobsoriano.muse.core.BleEvents
+import dev.wobsoriano.muse.core.BlePeripheral
+import dev.wobsoriano.muse.pairing.Advertisement
 import dev.wobsoriano.museportal.ble.gatt.DirectGatt
-import dev.wobsoriano.museportal.protocol.Bytes
-import dev.wobsoriano.museportal.protocol.Command
-import dev.wobsoriano.museportal.protocol.Event
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 
 /**
  * The BLE side of gadget pairing: a GATT server with RX and TX and a connectable advertisement, as
- * `pair.advertise` describes. It goes through [DirectGatt] because the Portal never gives apps
- * GATT the usual way. Everything runs on one handler thread; [emit] gets the commands to send back
- * to musecore.
+ * an [Advertisement] describes. It goes through [DirectGatt] because the Portal never gives apps
+ * GATT the usual way. Everything runs on one handler thread; [events] hears what happened on the
+ * link, for the pairing Controller.
  */
 @SuppressLint("MissingPermission")
-class GattPeripheral(private val context: Context, private val emit: (Command) -> Unit) {
+class GattPeripheral(private val context: Context, private val events: BleEvents) : BlePeripheral {
   private val thread = HandlerThread("ble").apply { start() }
   private val handler = Handler(thread.looper)
   private val adapter: BluetoothAdapter? = context.getSystemService(BluetoothManager::class.java)?.adapter
@@ -47,7 +47,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
   private var advertising: IBinder? = null
   private var originalName: String? = null
   private val prepared = ByteArrayOutputStream()
-  // A newer pair.advertise or pair.unadvertise cancels the steps still waiting from an older one.
+  // A newer advertise or unadvertise cancels the steps still waiting from an older one.
   private var session = 0
 
   private val queue =
@@ -56,13 +56,21 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
           scheduler = { delay, task -> handler.postDelayed(task, delay) },
       )
 
-  fun advertise(spec: Event.PairAdvertise) = handler.post { start(spec) }
+  override fun advertise(ad: Advertisement) {
+    handler.post { start(ad) }
+  }
 
-  fun unadvertise() = handler.post { teardown() }
+  override fun unadvertise() {
+    handler.post { teardown() }
+  }
 
-  fun notify(packets: List<Bytes>) = handler.post { queue.enqueue(packets.map { it.array }) }
+  override fun notify(packets: List<ByteArray>) {
+    handler.post { queue.enqueue(packets) }
+  }
 
-  fun disconnect() = handler.post { central?.let { address -> gatt?.serverDisconnect(serverIf, address) } }
+  override fun disconnect() {
+    handler.post { central?.let { address -> gatt?.serverDisconnect(serverIf, address) } }
+  }
 
   fun close() {
     handler.post {
@@ -71,7 +79,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
     }
   }
 
-  private fun start(spec: Event.PairAdvertise) {
+  private fun start(spec: Advertisement) {
     teardown()
     val mySession = ++session
     if (Build.VERSION.SDK_INT != Build.VERSION_CODES.P) return fail("pairing needs Android 9")
@@ -85,7 +93,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
     }
   }
 
-  private fun openServer(mySession: Int, spec: Event.PairAdvertise) {
+  private fun openServer(mySession: Int, spec: Advertisement) {
     val gatt = DirectGatt.connect(context) ?: return fail("could not reach the Bluetooth GATT service")
     if (mySession != session) return gatt.close()
     this.gatt = gatt
@@ -146,7 +154,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
                 Log.i(TAG, "central connected: $address")
                 central = address
                 mtu = 0
-                emit(Command.BleConnected(address))
+                events.connected(address)
               } else if (address == central) {
                 Log.i(TAG, "central disconnected: $address")
                 central = null
@@ -154,7 +162,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
                 cccdValue = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
                 queue.clear()
                 prepared.reset()
-                emit(Command.BleDisconnected)
+                events.disconnected()
               }
             }
           }
@@ -201,7 +209,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
                 cccdHandle -> cccdValue = value
                 rxHandle ->
                     if (prepared) this@GattPeripheral.prepared.write(value)
-                    else emit(Command.BleWrite(Bytes(value), mtu))
+                    else events.wrote(value, mtu)
               }
             }
           }
@@ -210,7 +218,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
             handler.post {
               if (mySession != session) return@post
               respond(address, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-              if (execute && prepared.size() > 0) emit(Command.BleWrite(Bytes(prepared.toByteArray()), mtu))
+              if (execute && prepared.size() > 0) events.wrote(prepared.toByteArray(), mtu)
               prepared.reset()
             }
           }
@@ -228,7 +236,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
 
   // The scan response can only carry the adapter's own name, so the adapter is renamed while
   // pairing and restored afterwards.
-  private fun setNameThenAdvertise(mySession: Int, spec: Event.PairAdvertise) {
+  private fun setNameThenAdvertise(mySession: Int, spec: Advertisement) {
     val adapter = adapter ?: return
     if (adapter.name != spec.name) {
       if (originalName == null) originalName = adapter.name
@@ -240,7 +248,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
     }
   }
 
-  private fun startAdvertising(mySession: Int, spec: Event.PairAdvertise) {
+  private fun startAdvertising(mySession: Int, spec: Advertisement) {
     val gatt = gatt ?: return
     val parameters =
         AdvertisingSetParameters.Builder()
@@ -253,7 +261,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
     val data =
         AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid.fromString(spec.service))
-            .addManufacturerData(spec.manufacturerId, spec.manufacturerData.array)
+            .addManufacturerData(spec.manufacturerId, spec.manufacturerData)
             .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
             .build()
@@ -266,7 +274,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
                   if (mySession != session) return@post
                   if (status == 0) {
                     Log.i(TAG, "advertising as ${spec.name}")
-                    emit(Command.BleAdvertising(ok = true))
+                    events.advertising(true)
                   } else {
                     advertising = null
                     fail("advertising failed: ${advertiseError(status)}")
@@ -286,7 +294,7 @@ class GattPeripheral(private val context: Context, private val emit: (Command) -
   private fun fail(error: String) {
     Log.w(TAG, error)
     teardown()
-    emit(Command.BleAdvertising(ok = false, error = error))
+    events.advertising(false, error)
   }
 
   private fun teardown() {

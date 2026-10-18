@@ -10,7 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 
-/** Keeps the process, and with it musecore, alive in the background. */
+/** Keeps the process, and with it the Muse core, alive in the background. */
 class MuseService : Service() {
   override fun onCreate() {
     super.onCreate()
