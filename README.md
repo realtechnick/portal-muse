@@ -8,8 +8,8 @@ Portal's bootloader stays locked, and Meta's own ADB support is all it needs.
   [hey-muse](https://github.com/wobsoriano/hey-muse), the TECHO5 fork that runs Muse on Echo devices.
   `MuseCore` is the app's way in: config, pairing, BLE events and questions go in, and the
   connection, pairing and reply status come out.
-- `android/app` is the app: the Bluetooth LE side of pairing, the microphone, playback and the
-  screen. It runs `MuseCore` in its own process.
+- `android/app` is the app: the Bluetooth LE side of pairing, the microphone, the "Hey Muse"
+  listener, playback and the screen. It runs `MuseCore` in its own process.
 - `android/probe` is a separate app that reports what a Portal allows on day one.
 - `android/wake` is the "Hey Muse" rule for Vosk: the grammar to decode with and how to decide a
   result. `tools/wakeeval` applies the same rule to a recording on the PC.
@@ -17,8 +17,12 @@ Portal's bootloader stays locked, and Meta's own ADB support is all it needs.
 
 ## Status
 
-Tap-to-talk first. An always-on "Hey Muse" wake word comes once the Portal's microphones are
-measured on the device.
+Tap the mic to ask, or turn on **Hey Muse** to ask hands-free. The first time it is turned on, the
+app downloads Vosk's `vosk-model-small-en-us-0.15` (41 MB, checked against a pinned SHA-256) into
+its files directory. The listener runs in the app's foreground service and starts at boot when it is
+on. It lets go of the microphone while another app records. If
+[portal-wake](https://github.com/rudysev/portal-wake) is installed, the app does not listen itself:
+it registers "hey muse" with portal-wake and answers its hand-offs.
 
 ## Build
 
@@ -45,6 +49,16 @@ adb logcat -s MuseProbe        # the day-one report
 adb push vosk-model-small-en-us-0.15 /sdcard/Android/data/dev.wobsoriano.museportal.probe/files/
 adb shell am start -n dev.wobsoriano.museportal.probe/.ProbeActivity -S --es only vosk   # two minutes of "Hey Muse" on Vosk
 adb install -g android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+To skip the download, copy in a model you already have (a debug build allows `run-as`):
+
+```sh
+adb push vosk-model-small-en-us-0.15 /data/local/tmp/
+adb shell run-as dev.wobsoriano.museportal cp -r /data/local/tmp/vosk-model-small-en-us-0.15 files/vosk-model-small-en-us-0.15.tmp
+adb shell run-as dev.wobsoriano.museportal mv files/vosk-model-small-en-us-0.15.tmp files/vosk-model-small-en-us-0.15
+adb shell am start -n dev.wobsoriano.museportal/.MainActivity --ez heyMuse true
+adb logcat -s MuseWake
 ```
 
 The app keeps its pairing in `muse.json` in its files directory, in the format the Go core wrote,

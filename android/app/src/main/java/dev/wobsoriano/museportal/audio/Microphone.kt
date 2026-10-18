@@ -14,8 +14,9 @@ sealed interface Capture {
 }
 
 /**
- * Tap-to-talk capture at 16 kHz mono PCM16. Stops after trailing silence, at a 12 s cap, or when
- * [shouldStop] turns true. Blocks; call it off the main thread.
+ * Question capture at 16 kHz mono PCM16. Stops after trailing silence, at a 12 s cap, or when
+ * [shouldStop] turns true. Leaves out the first [skipMs], where the wake chime plays. Blocks; call it
+ * off the main thread.
  */
 object Microphone {
   private const val TAG = "MuseMic"
@@ -25,7 +26,7 @@ object Microphone {
   private const val MIN_SPEECH_MS = 300
   private const val SPEECH_PEAK = 1_600
 
-  fun record(shouldStop: () -> Boolean, onLevel: (Float) -> Unit): Capture {
+  fun record(skipMs: Int, shouldStop: () -> Boolean, onLevel: (Float) -> Unit): Capture {
     val rec =
         try {
           open(MediaRecorder.AudioSource.VOICE_RECOGNITION) ?: open(MediaRecorder.AudioSource.MIC)
@@ -39,7 +40,7 @@ object Microphone {
       if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
         return Capture.Failed("Another app is using the microphone")
       }
-      return capture(rec, shouldStop, onLevel)
+      return capture(rec, skipMs, shouldStop, onLevel)
     } catch (e: IllegalStateException) {
       Log.w(TAG, "recording failed", e)
       return Capture.Failed("Another app is using the microphone")
@@ -62,9 +63,16 @@ object Microphone {
     return null
   }
 
-  private fun capture(rec: AudioRecord, shouldStop: () -> Boolean, onLevel: (Float) -> Unit): Capture {
+  /** Captures from [rec], which is already recording at 16 kHz mono; the caller stops it. */
+  fun capture(rec: AudioRecord, skipMs: Int, shouldStop: () -> Boolean, onLevel: (Float) -> Unit): Capture {
     val pcm = ByteArrayOutputStream()
     val chunk = ShortArray(RATE / 10)
+    var skipped = 0
+    while (skipped < skipMs * RATE / 1000 && !shouldStop()) {
+      val n = rec.read(chunk, 0, minOf(chunk.size, skipMs * RATE / 1000 - skipped))
+      if (n <= 0) break
+      skipped += n
+    }
     var elapsedMs = 0
     var speechMs = 0
     var silenceMs = 0

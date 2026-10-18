@@ -13,6 +13,8 @@ android {
     targetSdk = 28
     versionCode = 1
     versionName = "0.1.0"
+    // The Portal is arm64; Vosk's native code for other ABIs would add ~10 MB each.
+    ndk { abiFilters += listOf("arm64-v8a") }
   }
 
   compileOptions {
@@ -25,6 +27,8 @@ android {
 
 dependencies {
   implementation(project(":muse"))
+  implementation(project(":wake"))
+  implementation(libs.vosk.android)
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material3)

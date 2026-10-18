@@ -3,7 +3,7 @@ package dev.wobsoriano.museportal.ask
 import dev.wobsoriano.muse.core.AskUpdate
 import dev.wobsoriano.muse.core.ReplyKind
 
-/** One tap-to-talk question, from the mic to the spoken answer. */
+/** One question, from the mic to the spoken answer, started by a tap or by "Hey Muse". */
 sealed interface AskState {
   data object Idle : AskState
 
@@ -23,6 +23,9 @@ sealed interface AskState {
 sealed interface AskInput {
   data object Tap : AskInput
 
+  /** "Hey Muse" was heard. [listenerRecords]: the wake listener records the question on its own mic. */
+  data class Wake(val listenerRecords: Boolean) : AskInput
+
   data class Level(val level: Float) : AskInput
 
   /** A recording or a typed question went to the core as ask [id]. */
@@ -41,6 +44,12 @@ sealed interface AskEffect {
   data class Speak(val text: String) : AskEffect
 }
 
+/** Whether the question is still being recorded or answered; speaking the answer is tracked apart. */
+val AskState.inFlight: Boolean
+  get() =
+      this is AskState.Recording || this is AskState.Sending || this is AskState.Heard ||
+          (this is AskState.Answered && !complete)
+
 data class AskStep(val state: AskState, val effect: AskEffect? = null)
 
 fun AskState.next(input: AskInput): AskStep =
@@ -48,6 +57,9 @@ fun AskState.next(input: AskInput): AskStep =
       AskInput.Tap ->
           if (this is AskState.Recording) AskStep(this, AskEffect.StopRecording)
           else AskStep(AskState.Recording(), AskEffect.StartRecording)
+      is AskInput.Wake ->
+          if (this is AskState.Recording) AskStep(this)
+          else AskStep(AskState.Recording(), if (input.listenerRecords) null else AskEffect.StartRecording)
       is AskInput.Level -> AskStep(if (this is AskState.Recording) copy(level = input.level) else this)
       is AskInput.Sent -> AskStep(AskState.Sending(input.id))
       is AskInput.NotSent -> AskStep(if (this is AskState.Recording) AskState.Failed(input.reason) else this)

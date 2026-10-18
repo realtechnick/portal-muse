@@ -85,4 +85,22 @@ class AskStateTest {
     val last = run(AskInput.Tap, AskInput.Sent("a1"), reply(ReplyKind.Done, "Hi."), AskInput.Sent("a2")).last()
     assertEquals(AskStep(AskState.Sending("a2")), last)
   }
+
+  @Test
+  fun aWakeRecordsOnTheListenersMicOrItsOwn() {
+    assertEquals(AskStep(AskState.Recording()), run(AskInput.Wake(listenerRecords = true)).last())
+    assertEquals(AskStep(AskState.Recording(), AskEffect.StartRecording), run(AskInput.Wake(listenerRecords = false)).last())
+  }
+
+  @Test
+  fun aWakeWhileRecordingIsIgnored() {
+    assertEquals(AskStep(AskState.Recording()), run(AskInput.Tap, AskInput.Wake(listenerRecords = false)).last())
+  }
+
+  @Test
+  fun anAskIsInFlightUntilItsAnswerIsComplete() {
+    val states = run(AskInput.Tap, AskInput.Sent("a1"), reply(ReplyKind.Text, "Hi"), reply(ReplyKind.Done, "Hi.")).map { it.state.inFlight }
+    assertEquals(listOf(true, true, true, false), states)
+    assertEquals(false, AskState.Failed("no").inFlight)
+  }
 }

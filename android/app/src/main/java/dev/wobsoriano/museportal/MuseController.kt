@@ -18,13 +18,19 @@ import dev.wobsoriano.muse.core.Status
 import dev.wobsoriano.museportal.ask.AskEffect
 import dev.wobsoriano.museportal.ask.AskInput
 import dev.wobsoriano.museportal.ask.AskState
+import dev.wobsoriano.museportal.ask.inFlight
 import dev.wobsoriano.museportal.ask.next
 import dev.wobsoriano.museportal.audio.Capture
+import dev.wobsoriano.museportal.audio.Chime
 import dev.wobsoriano.museportal.audio.Microphone
 import dev.wobsoriano.museportal.audio.Speaker
 import dev.wobsoriano.museportal.ble.GattPeripheral
 import dev.wobsoriano.museportal.device.NetworkInfo
 import dev.wobsoriano.museportal.device.Settings
+import dev.wobsoriano.museportal.heymuse.WakeHost
+import dev.wobsoriano.museportal.heymuse.WakeInput
+import dev.wobsoriano.museportal.heymuse.WakeListener
+import dev.wobsoriano.museportal.heymuse.WakeState
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -61,16 +67,22 @@ data class MuseState(
     val name: String = "",
     val hasToken: Boolean = false,
     val canSpeak: Boolean = false,
+    /** The "Hey Muse" switch, and what the listener is doing. */
+    val wakeEnabled: Boolean = false,
+    val wake: WakeState = WakeState.Off,
 )
 
 /**
  * The one owner of the Muse core, the BLE peripheral, the microphone and the screen state. Lives for
- * the whole process; [MuseService] starts and stops it. The core runs in this process: it reaches the
- * BLE peripheral through [GattPeripheral] and the screen through [CoreListener].
+ * the whole process; [MuseService] starts and stops it, and with it the "Hey Muse" listener. The core
+ * runs in this process: it reaches the BLE peripheral through [GattPeripheral] and the screen through
+ * [CoreListener].
  */
 class MuseController(private val context: Context) {
   private val settings = Settings(context)
-  private val _state = MutableStateFlow(MuseState(name = settings.name, hasToken = settings.sdkToken.isNotEmpty()))
+  private val _state =
+      MutableStateFlow(
+          MuseState(name = settings.name, hasToken = settings.sdkToken.isNotEmpty(), wakeEnabled = settings.wakeEnabled))
   val state: StateFlow<MuseState> = _state.asStateFlow()
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -108,10 +120,33 @@ class MuseController(private val context: Context) {
       }
 
   private val network = NetworkInfo(context) { sendConfig() }
-  private val speaker = Speaker(context) { ok -> _state.update { it.copy(canSpeak = ok) } }
+  private val speaker =
+      Speaker(context, onReady = { ok -> _state.update { it.copy(canSpeak = ok) } }) { speaking ->
+        this.speaking = speaking
+        updateBusy()
+      }
+  private val chime = Chime()
   private var lastConfig: CoreConfig? = null
   @Volatile private var stopRecording = false
+  @Volatile private var speaking = false
+  private var busy = false
   private var started = false
+
+  private val heyMuse =
+      WakeListener(
+          context,
+          object : WakeHost {
+            override fun wakeAsk() = wake(listenerRecords = true)
+
+            override val shouldStopRecording
+              get() = stopRecording
+
+            override fun level(level: Float) = step(AskInput.Level(level))
+
+            override fun recorded(capture: Capture) = this@MuseController.recorded(capture)
+
+            override fun wakeState(state: WakeState) = _state.update { it.copy(wake = state) }
+          })
 
   @Synchronized
   fun start() {
@@ -119,12 +154,14 @@ class MuseController(private val context: Context) {
     started = true
     network.start()
     supervisor = scope.launch { supervise() }
+    heyMuse.start(settings.wakeEnabled, asking = busy)
   }
 
   @Synchronized
   fun stop() {
     if (!started) return
     started = false
+    heyMuse.stop()
     network.stop()
     supervisor?.cancel()
     supervisor = null
@@ -199,6 +236,29 @@ class MuseController(private val context: Context) {
 
   fun tapMic() = step(AskInput.Tap)
 
+  fun setWakeEnabled(on: Boolean) {
+    settings.wakeEnabled = on
+    _state.update { it.copy(wakeEnabled = on) }
+    heyMuse.setEnabled(on)
+  }
+
+  val wakeEnabled: Boolean
+    get() = settings.wakeEnabled
+
+  /**
+   * "Hey Muse" was heard: chimes and starts an ask, unless a question is already being recorded.
+   * With [listenerRecords] our listener records it on the mic that heard the wake; otherwise (a
+   * portal-wake hand-off) the question gets a mic of its own.
+   */
+  fun wake(listenerRecords: Boolean): Boolean {
+    if (_state.value.ask is AskState.Recording) return false
+    speaker.stop()
+    stopRecording = false
+    chime.play()
+    step(AskInput.Wake(listenerRecords), skipMs = WakeListener.CHIME_SKIP_MS)
+    return true
+  }
+
   fun ask(text: String) {
     val id = UUID.randomUUID().toString()
     val c = core
@@ -217,7 +277,7 @@ class MuseController(private val context: Context) {
 
   private fun currentConfig() = CoreConfig(settings.name, settings.sdkToken, network.snapshot().ssid)
 
-  private fun step(input: AskInput) {
+  private fun step(input: AskInput, skipMs: Int = 0) {
     var effect: AskEffect? = null
     _state.update { s ->
       val next = s.ask.next(input)
@@ -225,35 +285,51 @@ class MuseController(private val context: Context) {
       s.copy(ask = next.state)
     }
     when (val e = effect) {
-      AskEffect.StartRecording -> record()
+      AskEffect.StartRecording -> record(skipMs)
       AskEffect.StopRecording -> stopRecording = true
       is AskEffect.Speak -> speaker.speak(e.text)
       null -> Unit
     }
+    updateBusy()
   }
 
-  private fun record() {
+  /** Tells the wake listener when an ask starts and when its answer has been spoken. */
+  @Synchronized
+  private fun updateBusy() {
+    val now = _state.value.ask.inFlight || speaking
+    if (now == busy) return
+    busy = now
+    heyMuse.post(WakeInput.Asking(now))
+  }
+
+  private fun record(skipMs: Int) {
     speaker.stop()
     stopRecording = false
     thread(name = "muse-mic") {
-      val input =
-          when (val capture = Microphone.record({ stopRecording }) { level -> step(AskInput.Level(level)) }) {
-            is Capture.Failed -> AskInput.NotSent(capture.reason)
-            is Capture.Wav -> {
-              val id = UUID.randomUUID().toString()
-              Log.i(TAG, "asking $id with ${capture.bytes.size} bytes of audio")
-              val c = core
-              if (c != null) AskInput.Sent(id).also { c.ask(id, wav = capture.bytes) } else AskInput.NotSent("Muse is not running")
-            }
-          }
-      step(input)
+      heyMuse.awaitMicFree(MIC_HANDOFF_MS)
+      recorded(Microphone.record(skipMs, { stopRecording }) { level -> step(AskInput.Level(level)) })
     }
+  }
+
+  private fun recorded(capture: Capture) {
+    val input =
+        when (capture) {
+          is Capture.Failed -> AskInput.NotSent(capture.reason)
+          is Capture.Wav -> {
+            val id = UUID.randomUUID().toString()
+            Log.i(TAG, "asking $id with ${capture.bytes.size} bytes of audio")
+            val c = core
+            if (c != null) AskInput.Sent(id).also { c.ask(id, wav = capture.bytes) } else AskInput.NotSent("Muse is not running")
+          }
+        }
+    step(input)
   }
 
   private companion object {
     const val TAG = "MuseApp"
     const val HEALTHY_MS = 60_000L
     const val MAX_BACKOFF_MS = 30_000L
+    const val MIC_HANDOFF_MS = 1_000L
 
     val logger = Logger { level, message ->
       when (level) {
