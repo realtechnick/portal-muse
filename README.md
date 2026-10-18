@@ -32,6 +32,7 @@ computer. Then:
 adb install -g android/probe/build/outputs/apk/debug/probe-debug.apk
 adb shell am start -n dev.wobsoriano.museportal.probe/.ProbeActivity
 adb logcat -s MuseProbe        # the day-one report
+adb shell am start -n dev.wobsoriano.museportal.probe/.ProbeActivity -S --es only wake   # a minute of "Hey Muse"
 adb install -g android/app/build/outputs/apk/debug/app-debug.apk
 ```
 

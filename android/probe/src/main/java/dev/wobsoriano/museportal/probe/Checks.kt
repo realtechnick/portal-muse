@@ -64,11 +64,12 @@ class Checks(
           "directGatt" to ::directGatt,
           "mic" to ::microphones,
           "backgroundMic" to ::backgroundMic,
+          "wake" to ::wake,
       )
 
   /** Runs every check, or only the one named [only] (`adb shell am start ... --es only directGatt`). */
   fun run(only: String?) =
-      checks.filter { if (only == null) it.first != "backgroundMic" else it.first == only }.forEach { it.second() }
+      checks.filter { if (only == null) it.first !in ON_REQUEST else it.first == only }.forEach { it.second() }
 
   private fun device() =
       report.section("device") {
@@ -462,6 +463,8 @@ class Checks(
         }
       }
 
+  private fun wake() = wakeCheck(context, report, prompt)
+
   private fun record(source: Int, rate: Int, channelMask: Int): String {
     val minBuf = AudioRecord.getMinBufferSize(rate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
     if (minBuf <= 0) return "unsupported (getMinBufferSize=$minBuf)"
@@ -522,6 +525,9 @@ class Checks(
   }
 
   private companion object {
+    /** Checks that only run when named with --es only. */
+    val ON_REQUEST = setOf("backgroundMic", "wake")
+
     val MUSE_SERVICE: UUID = UUID.fromString("7fdd3d1c-38ea-46cf-8b46-314ecf5f240c")
     val MUSE_RX: UUID = UUID.fromString("4d593029-28a2-4a6e-a1f0-3c2d5e8f9b01")
     val MUSE_TX: UUID = UUID.fromString("d75dc4ca-7b2b-4e9c-8f0a-1d2e3f4a5b6c")
