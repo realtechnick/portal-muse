@@ -4,6 +4,9 @@ The grammar and thresholds come from the same file the Kotlin matcher reads, so 
 
   python tools/wakeeval/eval.py --model path/to/vosk-model-en-us-0.22-lgraph
   python tools/wakeeval/eval.py --model ... --wav x.wav --labels x.labels --dump results.jsonl
+
+After changing the rule, refresh the fixture the Kotlin tests compare against with
+--dump android/wake/src/test/resources/vosk/wake1.results.jsonl.
 """
 
 import argparse

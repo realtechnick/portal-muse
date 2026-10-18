@@ -1,0 +1,14 @@
+{"decision": "near_miss", "result": {"result": [{"conf": 0.935972, "end": 1.223694, "start": 1.05, "word": "hey"}, {"conf": 0.71733, "end": 1.65, "start": 1.23, "word": "muse"}], "text": "hey muse"}}
+{"decision": "near_miss", "result": {"result": [{"conf": 0.65672, "end": 4.11, "start": 3.99, "word": "hey"}, {"conf": 0.678842, "end": 4.68, "start": 4.110102, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 0.992548, "end": 7.02, "start": 6.81, "word": "hey"}, {"conf": 0.877984, "end": 7.59, "start": 7.02, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 1.0, "end": 11.04, "start": 10.83, "word": "hey"}, {"conf": 0.96291, "end": 11.58, "start": 11.04, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 1.0, "end": 14.07, "start": 13.86, "word": "hey"}, {"conf": 0.962928, "end": 14.64, "start": 14.07, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 1.0, "end": 17.13, "start": 16.92, "word": "hey"}, {"conf": 0.948585, "end": 17.73, "start": 17.13, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 1.0, "end": 20.01, "start": 19.83, "word": "hey"}, {"conf": 0.952955, "end": 20.61, "start": 20.01, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 1.0, "end": 23.037127, "start": 22.83, "word": "hey"}, {"conf": 0.870744, "end": 23.58, "start": 23.04, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 1.0, "end": 26.16, "start": 25.92, "word": "hey"}, {"conf": 0.958181, "end": 26.73, "start": 26.16, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 1.0, "end": 30.15, "start": 29.67, "word": "hey"}, {"conf": 0.962895, "end": 30.87, "start": 30.24, "word": "muse"}], "text": "hey muse"}}
+{"decision": "near_miss", "result": {"result": [{"conf": 0.836706, "end": 33.984335, "start": 33.78, "word": "hey"}, {"conf": 0.688383, "end": 34.62, "start": 33.99, "word": "muse"}], "text": "hey muse"}}
+{"decision": "wake", "result": {"result": [{"conf": 1.0, "end": 37.23, "start": 36.66, "word": "hey"}, {"conf": 0.962884, "end": 38.13, "start": 37.35, "word": "muse"}], "text": "hey muse"}}
+{"decision": "ignore", "result": {"result": [{"conf": 0.936936, "end": 50.518484, "start": 50.01, "word": "[unk]"}], "text": "[unk]"}}
+{"decision": "ignore", "result": {"result": [{"conf": 0.549814, "end": 52.65, "start": 52.44, "word": "why"}, {"conf": 0.956743, "end": 52.98, "start": 52.650601, "word": "not"}], "text": "why not"}}
