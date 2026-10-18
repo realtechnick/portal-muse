@@ -1,0 +1,16 @@
+{
+  "identity": {
+    "mac": "02:11:22:a1:b2:c3"
+  },
+  "credentials": {
+    "access_token": "fake-access-token",
+    "refresh_token": "hatch_refresh:fake-refresh-token",
+    "token_type": "device",
+    "username": "someone@example.com",
+    "api_url": "https://legacy.example",
+    "api_url_v2": "https://api.example",
+    "noise_host": "noise.example",
+    "access_token_saved_at": 1760000000
+  },
+  "sdk_token_reported": true
+}
