@@ -13,7 +13,7 @@ import kotlin.concurrent.thread
 
 /**
  * Registers "hey muse" with portal-wake (github.com/rudysev/portal-wake), the Vosk wake listener
- * Jarvis uses, and logs each hand-off so its accuracy can be compared with our own detector.
+ * Jarvis uses, and logs each hand-off so its accuracy can be compared with the Vosk check's.
  *
  * portal-wake takes the mic back only after it sees the receiving app record and stop, so this
  * records for a second the way an assistant's turn would.

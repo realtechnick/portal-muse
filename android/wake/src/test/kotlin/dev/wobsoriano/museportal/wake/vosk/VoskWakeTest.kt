@@ -1,6 +1,5 @@
 package dev.wobsoriano.museportal.wake.vosk
 
-import dev.wobsoriano.museportal.wake.resource
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -47,7 +46,7 @@ class VoskWakeTest {
 
   @Test
   fun agreesWithTheEvalScriptOnWake1() {
-    val lines = resource("vosk/wake1.results.jsonl").readLines().filter { it.isNotBlank() }
+    val lines = javaClass.getResource("/vosk/wake1.results.jsonl")!!.readText().lines().filter { it.isNotBlank() }
     assertEquals(14, lines.size)
     val kinds = lines.map { line ->
       val o = Json.parseToJsonElement(line).jsonObject

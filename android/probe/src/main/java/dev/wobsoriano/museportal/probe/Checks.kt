@@ -64,7 +64,6 @@ class Checks(
           "directGatt" to ::directGatt,
           "mic" to ::microphones,
           "backgroundMic" to ::backgroundMic,
-          "wake" to ::wake,
           "vosk" to ::vosk,
       )
 
@@ -464,8 +463,6 @@ class Checks(
         }
       }
 
-  private fun wake() = wakeCheck(context, report, prompt)
-
   private fun vosk() = voskCheck(context, report, prompt)
 
   private fun record(source: Int, rate: Int, channelMask: Int): String {
@@ -529,7 +526,7 @@ class Checks(
 
   private companion object {
     /** Checks that only run when named with --es only. */
-    val ON_REQUEST = setOf("backgroundMic", "wake", "vosk")
+    val ON_REQUEST = setOf("backgroundMic", "vosk")
 
     val MUSE_SERVICE: UUID = UUID.fromString("7fdd3d1c-38ea-46cf-8b46-314ecf5f240c")
     val MUSE_RX: UUID = UUID.fromString("4d593029-28a2-4a6e-a1f0-3c2d5e8f9b01")
