@@ -3,6 +3,7 @@ package dev.wobsoriano.museportal.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -33,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,7 +72,8 @@ fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettin
             Modifier.fillMaxSize().padding(top = 72.dp, bottom = 32.dp, start = 64.dp, end = 64.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center) {
-              Box(Modifier.size(side), contentAlignment = Alignment.Center) { Character(mood, state.level, avatar, side) }
+              val dim by animateFloatAsState(if (mood == Mood.Offline) 0.45f else 1f, tween(600), label = "offline")
+              Box(Modifier.size(side).alpha(dim), contentAlignment = Alignment.Center) { Character(mood, state.level, avatar, side) }
               Spacer(Modifier.height(16.dp))
               AnimatedContent(Line(state.statusLine, turn), transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) }, label = "turn") { line ->
                 TurnWords(line, captionOnly = avatar != null)
@@ -85,15 +88,14 @@ private data class Line(val status: String, val turn: TurnText?)
 private fun TurnWords(line: Line, captionOnly: Boolean) {
   Column(Modifier.widthIn(max = 1040.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
     val turn = line.turn
+    if (turn != null && turn.heard.isNotEmpty()) {
+      Text("“${turn.heard}”", style = MaterialTheme.typography.bodyLarge, color = Palette.Faint, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
     if (line.status.isNotEmpty() && (turn == null || turn.answer.isEmpty())) {
       Text(line.status, style = MaterialTheme.typography.titleLarge, color = Palette.Dim, textAlign = TextAlign.Center)
     }
-    if (turn == null) return@Column
-    if (turn.heard.isNotEmpty()) {
-      Text("“${turn.heard}”", style = MaterialTheme.typography.bodyLarge, color = Palette.Faint, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-    }
-    if (turn.answer.isNotEmpty()) {
-      val size = if (captionOnly) 24.sp else if (turn.answer.length > 160) 30.sp else 38.sp
+    if (turn != null && turn.answer.isNotEmpty()) {
+      val size = if (captionOnly) 26.sp else if (turn.answer.length > 160) 30.sp else 38.sp
       Text(
           turn.answer,
           fontSize = size,

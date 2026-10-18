@@ -212,7 +212,7 @@ private fun DeviceSettings(state: MuseState, actions: SettingsActions) {
       Text("Muse token", style = MaterialTheme.typography.titleLarge)
       MaskedToken(state.tokenHint)
     }
-    if (!replacing) Link("Replace", { replacing = true })
+    Link(if (replacing) "Cancel" else "Replace", { replacing = !replacing })
   }
   if (replacing) {
     Text("Create one at gadgets.muse.ai → Settings → SDK tokens.", style = MaterialTheme.typography.bodyMedium, color = Palette.Dim)

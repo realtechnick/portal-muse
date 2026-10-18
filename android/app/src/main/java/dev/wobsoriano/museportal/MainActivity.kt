@@ -70,7 +70,8 @@ class MainActivity : ComponentActivity() {
           val previewing by preview.collectAsStateWithLifecycle()
           val avatar by avatars.load.collectAsStateWithLifecycle()
           val p = previewing
-          val state = p?.state?.invoke(real) ?: real
+          // A preview is for screenshots, so it shows a made-up token rather than the real last four.
+          val state = p?.state?.invoke(real)?.copy(tokenHint = "mgst_…Ab12") ?: real
           val screen = p?.screen ?: state.screen
           App(screen, state, avatar, readOnly = p != null)
         }
