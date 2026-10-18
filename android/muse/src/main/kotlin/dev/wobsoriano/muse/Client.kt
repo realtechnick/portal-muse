@@ -349,7 +349,13 @@ class Client(private val cfg: Config) {
                 url = url,
                 bearer = v.authToken,
                 userAgent = userAgent,
-                http = http.newBuilder().pingInterval(t.ping.inWholeMilliseconds, java.util.concurrent.TimeUnit.MILLISECONDS).build(),
+                // Noise ciphertext does not compress, so nothing is deflated even if the VM agrees to it.
+                http =
+                    http
+                        .newBuilder()
+                        .pingInterval(t.ping.inWholeMilliseconds, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        .minWebSocketMessageToCompress(Long.MAX_VALUE)
+                        .build(),
                 nodeId = st.identity.nodeId,
                 register = register,
                 commands = commands,
