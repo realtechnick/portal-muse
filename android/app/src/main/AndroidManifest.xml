@@ -19,7 +19,7 @@
   <application
       android:name=".MuseApp"
       android:label="Muse"
-      android:icon="@android:drawable/ic_btn_speak_now"
+      android:icon="@mipmap/ic_launcher"
       android:allowBackup="false"
       android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
 

@@ -73,3 +73,11 @@ same rule on the PC and scores it against a file of attempt times.
 of hey-muse's Go port. Its test vectors in `android/muse/src/test/resources/pairing` are Meta's
 (Apache 2.0). `third_party/pico` is SVOX Pico (Apache 2.0). What came from hey-muse is MIT:
 `LICENSE.hey-muse`, `NOTICE.hey-muse`.
+
+The character in `android/app/src/main/assets/muse-avatar/` and the launcher icons made from it are
+Meta's default Muse gadget avatar ("Jollybot") from
+[facebookincubator/muse-gadget-sdk](https://github.com/facebookincubator/muse-gadget-sdk). The SDK's
+Apache license does not cover it; it is included at the project owner's choice. Replacing the files
+in `assets/muse-avatar/` swaps it, and `tools/make-icon/MakeIcon.java` remakes the icons from the new
+`idle.png`. A set copied to the app's `files/muse-avatar/` on the device takes precedence over the
+built-in one.
