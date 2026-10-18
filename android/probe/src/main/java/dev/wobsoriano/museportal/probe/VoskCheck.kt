@@ -36,9 +36,9 @@ internal fun voskCheck(context: Context, report: Report, prompt: (String) -> Uni
         return@section
       }
       val files = context.getExternalFilesDir(null)
-      val dir = MODELS.map { File(files, it) }.firstOrNull { File(it, "am").isDirectory && File(it, "conf").isDirectory }
-      if (dir == null) {
-        put("model", "MISSING: push one of ${MODELS.joinToString()} to $files/")
+      val dir = File(files, MODEL)
+      if (!File(dir, "am").isDirectory || !File(dir, "conf").isDirectory) {
+        put("model", "MISSING: push $MODEL to $files/")
         return@section
       }
       val rule = VoskWake.heyMuse()
@@ -226,8 +226,8 @@ private class Memory {
   fun peak() = "javaHeap=${peakJava / MB} MB nativeHeap=${peakNative / MB} MB (sampled every chunk)"
 }
 
-// The first one pushed to the probe's files dir is used, so the small model can be tried by pushing it.
-private val MODELS = listOf("vosk-model-small-en-us-0.15", "vosk-model-en-us-0.22-lgraph")
+// The lgraph model cost 3.5x the CPU and twice the memory on a Portal, and was no more accurate.
+private const val MODEL = "vosk-model-small-en-us-0.15"
 
 private class Window(val from: Int, val label: String, val instruction: String)
 

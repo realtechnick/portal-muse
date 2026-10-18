@@ -42,7 +42,7 @@ computer. Then:
 adb install -g android/probe/build/outputs/apk/debug/probe-debug.apk
 adb shell am start -n dev.wobsoriano.museportal.probe/.ProbeActivity
 adb logcat -s MuseProbe        # the day-one report
-adb push vosk-model-en-us-0.22-lgraph /sdcard/Android/data/dev.wobsoriano.museportal.probe/files/
+adb push vosk-model-small-en-us-0.15 /sdcard/Android/data/dev.wobsoriano.museportal.probe/files/
 adb shell am start -n dev.wobsoriano.museportal.probe/.ProbeActivity -S --es only vosk   # two minutes of "Hey Muse" on Vosk
 adb install -g android/app/build/outputs/apk/debug/app-debug.apk
 ```

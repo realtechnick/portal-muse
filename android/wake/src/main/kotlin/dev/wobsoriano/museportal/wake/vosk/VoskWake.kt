@@ -21,8 +21,8 @@ data class Heard(val word: String, val conf: Double, val start: Double, val end:
 sealed class Decision {
   abstract val heard: List<Heard>
 
-  /** Exactly the phrase, every word at or above its floor. */
-  data class Wake(override val heard: List<Heard>) : Decision()
+  /** The phrase, word for word and every word at or above its floor, somewhere in the result. */
+  data class Wake(override val heard: List<Heard>, val phrase: List<Heard>) : Decision()
 
   /** The keyword was heard but is not a wake. Worth logging when tuning. */
   data class NearMiss(override val heard: List<Heard>, val reason: Reason) : Decision()
@@ -32,21 +32,23 @@ sealed class Decision {
 }
 
 sealed class Reason {
-  /** Exactly the phrase, but these words fell below their floors. */
+  /** The phrase, but these words fell below their floors. */
   data class Unsure(val below: List<Pair<Heard, PhraseWord>>) : Reason() {
     override fun toString() =
         "unsure: " + below.joinToString(", ") { (h, p) -> String.format(Locale.ROOT, "%s %.2f < %.2f", p.word, h.conf, p.minConf) }
   }
 
-  /** The keyword among other words. */
-  object NotAlone : Reason() {
-    override fun toString() = "not alone"
+  /** The keyword without the rest of the phrase right before it. */
+  object Partial : Reason() {
+    override fun toString() = "partial"
   }
 }
 
 /**
  * The "Hey Muse" rule for Vosk in restricted-grammar mode: the [grammar] to build the recognizer with,
- * and the [phrase] a final result must be, word for word and over each word's floor, to wake.
+ * and the [phrase] a final result must contain, its words adjacent and each over its floor, to wake.
+ * Vosk often wraps a real attempt in whatever came before or after it ("[unk] the hey muse"), so the
+ * phrase may sit anywhere in the result.
  *
  * The decoys in the grammar give the decoder somewhere to put speech that is not the phrase, so random
  * speech does not come out as "hey muse" unless it sounds like it; the floors reject what still does.
@@ -64,11 +66,13 @@ class VoskWake(val phrase: List<PhraseWord>, val grammar: List<String>) {
   /** Decides a Vosk final result (`Recognizer.getResult()` / `getFinalResult()` JSON). */
   fun decide(resultJson: String): Decision {
     val heard = parseResult(resultJson)
-    if (heard.map { it.word } == phrase.map { it.word }) {
-      val below = heard.zip(phrase).filter { (h, p) -> h.conf < p.minConf }
-      return if (below.isEmpty()) Decision.Wake(heard) else Decision.NearMiss(heard, Reason.Unsure(below))
+    val words = phrase.map { it.word }
+    val matches = heard.windowed(phrase.size).filter { w -> w.map { it.word } == words }
+    matches.firstOrNull { w -> w.zip(phrase).all { (h, p) -> h.conf >= p.minConf } }?.let { return Decision.Wake(heard, it) }
+    matches.firstOrNull()?.let { w ->
+      return Decision.NearMiss(heard, Reason.Unsure(w.zip(phrase).filter { (h, p) -> h.conf < p.minConf }))
     }
-    if (heard.any { it.word == phrase.last().word }) return Decision.NearMiss(heard, Reason.NotAlone)
+    if (heard.any { it.word == phrase.last().word }) return Decision.NearMiss(heard, Reason.Partial)
     return Decision.Ignore(heard)
   }
 

@@ -2,7 +2,7 @@
 
 The grammar and thresholds come from the same file the Kotlin matcher reads, so the two cannot drift.
 
-  python tools/wakeeval/eval.py --model path/to/vosk-model-en-us-0.22-lgraph
+  python tools/wakeeval/eval.py --model path/to/vosk-model-small-en-us-0.15
   python tools/wakeeval/eval.py --model ... --wav x.wav --labels x.labels --dump results.jsonl
 
 After changing the rule, refresh the fixture the Kotlin tests compare against with
@@ -21,17 +21,24 @@ CHUNK_SAMPLES = 1600
 
 
 def decide(rule, result):
-    """Mirrors VoskWake.decide in :wake. Returns (kind, reason)."""
+    """Mirrors VoskWake.decide in :wake. Returns (kind, reason, index of the phrase's first word or None)."""
     words = result.get("result", [])
-    heard = [w["word"] for w in words]
     phrase = rule["phrase"]
-    if heard == [p["word"] for p in phrase]:
-        weak = ["%s %.2f < %.2f" % (p["word"], w.get("conf", 0.0), p["minConf"])
-                for w, p in zip(words, phrase) if w.get("conf", 0.0) < p["minConf"]]
-        return ("near_miss", "unsure: " + ", ".join(weak)) if weak else ("wake", "")
-    if phrase[-1]["word"] in heard:
-        return "near_miss", "not alone"
-    return "ignore", ""
+    want = [p["word"] for p in phrase]
+    starts = [i for i in range(len(words) - len(phrase) + 1) if [w["word"] for w in words[i:i + len(phrase)]] == want]
+
+    def below(i):
+        return [(w, p) for w, p in zip(words[i:], phrase) if w.get("conf", 0.0) < p["minConf"]]
+
+    for i in starts:
+        if not below(i):
+            return "wake", "", i
+    if starts:
+        i = starts[0]
+        return "near_miss", "unsure: " + ", ".join("%s %.2f < %.2f" % (p["word"], w.get("conf", 0.0), p["minConf"]) for w, p in below(i)), i
+    if want[-1] in [w["word"] for w in words]:
+        return "near_miss", "partial", None
+    return "ignore", "", None
 
 
 def recognize(model_dir, wav_path, grammar):
@@ -79,10 +86,10 @@ def main():
         words = result.get("result", [])
         if not words:
             continue
-        kind, reason = decide(rule, result)
+        kind, reason, at = decide(rule, result)
         if dump:
             dump.write(json.dumps({"result": result, "decision": kind}, sort_keys=True) + "\n")
-        start = words[0]["start"]
+        start = words[at if at is not None else 0]["start"]
         attempt = next((t for t in labels if abs(t - start) <= a.tolerance), None)
         if kind == "wake" and attempt is not None:
             label = "HIT"
