@@ -154,7 +154,7 @@ internal fun wakeCheck(context: Context, report: Report, prompt: (String) -> Uni
 private const val SECONDS = 60
 private const val NEVER_FIRES = 1.1
 
-private fun writeWav(file: java.io.File, pcm: ByteArray) {
+internal fun writeWav(file: java.io.File, pcm: ByteArray) {
   val header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
   header.put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVE".toByteArray())
   header.put("fmt ".toByteArray()).putInt(16).putShort(1).putShort(1).putInt(16_000).putInt(32_000).putShort(2).putShort(16)

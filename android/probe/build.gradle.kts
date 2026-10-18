@@ -30,4 +30,5 @@ dependencies {
   implementation(libs.androidx.compose.material3)
   implementation(libs.androidx.compose.ui)
   implementation(project(":wake"))
+  implementation(libs.vosk.android)
 }
