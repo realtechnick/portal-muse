@@ -1,0 +1,11 @@
+hey_muse-hey_muse_david hey_muse.tflite parity/hey_muse_david.wav 6 10 0.99
+hey_muse-hey_muse_zira hey_muse.tflite parity/hey_muse_zira.wav 6 10 0.99
+hey_muse-speech_zira hey_muse.tflite parity/speech_zira.wav 6 10 0.99
+hey_muse-noise hey_muse.tflite parity/noise.wav 6 10 0.99
+hey_muse-silence hey_muse.tflite parity/silence.wav 6 10 0.99
+hey_muse-alexa hey_muse.tflite testdata/alexa.wav 6 10 0.99
+hey_muse-hey_jarvis hey_muse.tflite testdata/hey_jarvis.wav 6 10 0.99
+hey_muse-nowake hey_muse.tflite testdata/nowake.wav 6 10 0.99
+hey_muse-okay_nabu hey_muse.tflite testdata/okay_nabu.wav 6 10 0.99
+hey_jarvis-hey_jarvis testdata/hey_jarvis.tflite testdata/hey_jarvis.wav 5 10 0.85
+alexa-alexa testdata/alexa.tflite testdata/alexa.wav 5 10 0.85
