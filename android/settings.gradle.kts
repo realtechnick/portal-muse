@@ -22,4 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "muse-portal"
 
-include(":app", ":probe")
+include(":app", ":muse", ":probe")
