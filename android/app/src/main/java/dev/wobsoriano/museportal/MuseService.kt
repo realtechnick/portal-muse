@@ -9,9 +9,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import dev.wobsoriano.museportal.overlay.OverlayBar
 
 /** Keeps the process, and with it the Muse core, alive in the background. */
 class MuseService : Service() {
+  private var overlay: OverlayBar? = null
+
   override fun onCreate() {
     super.onCreate()
     val nm = getSystemService(NotificationManager::class.java)
@@ -27,11 +30,13 @@ class MuseService : Service() {
             .build()
     startForeground(NOTIFICATION_ID, notification)
     muse.start()
+    overlay = OverlayBar(this, muse.state, avatars.load).also { it.start() }
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
 
   override fun onDestroy() {
+    overlay?.stop()
     muse.stop()
     super.onDestroy()
   }

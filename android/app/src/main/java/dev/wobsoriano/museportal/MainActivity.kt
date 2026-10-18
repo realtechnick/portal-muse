@@ -1,6 +1,7 @@
 package dev.wobsoriano.museportal
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -120,7 +121,11 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun requestOverlay() {
-    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+    try {
+      startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+    } catch (e: ActivityNotFoundException) {
+      Toast.makeText(this, "This Portal has no setting for that", Toast.LENGTH_LONG).show()
+    }
   }
 
   private val setupActions =
