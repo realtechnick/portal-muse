@@ -63,10 +63,12 @@ class Checks(
           "bluetooth" to ::bluetooth,
           "directGatt" to ::directGatt,
           "mic" to ::microphones,
+          "backgroundMic" to ::backgroundMic,
       )
 
   /** Runs every check, or only the one named [only] (`adb shell am start ... --es only directGatt`). */
-  fun run(only: String?) = checks.filter { only == null || it.first == only }.forEach { it.second() }
+  fun run(only: String?) =
+      checks.filter { if (only == null) it.first != "backgroundMic" else it.first == only }.forEach { it.second() }
 
   private fun device() =
       report.section("device") {
@@ -436,6 +438,28 @@ class Checks(
           }
         }
         prompt("")
+      }
+
+  // Whether a backgrounded app with a running foreground service still hears the mic, which an
+  // always-on wake word needs. Android idles a background app's mic after about a minute, so this
+  // waits 75 s first; send the probe to the background during the wait. Not part of a full run.
+  private fun backgroundMic() =
+      report.section("backgroundMic") {
+        ProbeService.started = CountDownLatch(1)
+        context.startForegroundService(Intent(context, ProbeService::class.java))
+        put("service", if (ProbeService.started.await(5, TimeUnit.SECONDS)) "started" else "did not start")
+        try {
+          for (s in 75 downTo 1) {
+            prompt("Press Home now. Recording in the background in $s s")
+            Thread.sleep(1_000)
+          }
+          for ((sourceName, source) in SOURCES) {
+            get("$sourceName.16000.mono") { record(source, 16_000, AudioFormat.CHANNEL_IN_MONO) }
+          }
+        } finally {
+          context.stopService(Intent(context, ProbeService::class.java))
+          prompt("")
+        }
       }
 
   private fun record(source: Int, rate: Int, channelMask: Int): String {
