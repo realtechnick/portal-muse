@@ -322,7 +322,7 @@ class WakeListener(private val context: Context, private val host: WakeHost) {
   private fun wake(rec: AudioRecord, d: Decision.Wake) {
     Log.i(TAG, "wake: ${d.heard.joinToString(" ") { "${it.word}(${it.conf})" }}")
     if (!host.wakeAsk()) return
-    val capture = Microphone.capture(rec, CHIME_SKIP_MS, { host.shouldStopRecording }, host::level)
+    val capture = Microphone.capture(rec, CHIME_SKIP_MS, { host.shouldStopRecording }, onLevel = host::level)
     closeMic()
     host.recorded(capture)
   }

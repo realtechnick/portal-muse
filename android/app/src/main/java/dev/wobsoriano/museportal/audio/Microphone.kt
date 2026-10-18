@@ -26,7 +26,8 @@ object Microphone {
   private const val MIN_SPEECH_MS = 300
   private const val SPEECH_PEAK = 1_600
 
-  fun record(skipMs: Int, shouldStop: () -> Boolean, onLevel: (Float) -> Unit): Capture {
+  /** [waitForSpeechMs]: give up when nobody has started talking by then. */
+  fun record(skipMs: Int, shouldStop: () -> Boolean, waitForSpeechMs: Int = MAX_MS, onLevel: (Float) -> Unit): Capture {
     val rec =
         try {
           open(MediaRecorder.AudioSource.VOICE_RECOGNITION) ?: open(MediaRecorder.AudioSource.MIC)
@@ -40,7 +41,7 @@ object Microphone {
       if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
         return Capture.Failed("Another app is using the microphone")
       }
-      return capture(rec, skipMs, shouldStop, onLevel)
+      return capture(rec, skipMs, shouldStop, waitForSpeechMs, onLevel)
     } catch (e: IllegalStateException) {
       Log.w(TAG, "recording failed", e)
       return Capture.Failed("Another app is using the microphone")
@@ -64,7 +65,13 @@ object Microphone {
   }
 
   /** Captures from [rec], which is already recording at 16 kHz mono; the caller stops it. */
-  fun capture(rec: AudioRecord, skipMs: Int, shouldStop: () -> Boolean, onLevel: (Float) -> Unit): Capture {
+  fun capture(
+      rec: AudioRecord,
+      skipMs: Int,
+      shouldStop: () -> Boolean,
+      waitForSpeechMs: Int = MAX_MS,
+      onLevel: (Float) -> Unit,
+  ): Capture {
     val pcm = ByteArrayOutputStream()
     val chunk = ShortArray(RATE / 10)
     var skipped = 0
@@ -76,7 +83,7 @@ object Microphone {
     var elapsedMs = 0
     var speechMs = 0
     var silenceMs = 0
-    while (!shouldStop() && elapsedMs < MAX_MS) {
+    while (!shouldStop() && elapsedMs < MAX_MS && (speechMs > 0 || elapsedMs < waitForSpeechMs)) {
       val n = rec.read(chunk, 0, chunk.size)
       if (n <= 0) break
       var peak = 0

@@ -123,7 +123,7 @@ class MuseController(private val context: Context) {
   private val speaker =
       Speaker(context, onReady = { ok -> _state.update { it.copy(canSpeak = ok) } }) { speaking ->
         this.speaking = speaking
-        updateBusy()
+        if (!speaking) step(AskInput.Spoken) else updateBusy()
       }
   private val chime = Chime()
   private var lastConfig: CoreConfig? = null
@@ -286,6 +286,10 @@ class MuseController(private val context: Context) {
     }
     when (val e = effect) {
       AskEffect.StartRecording -> record(skipMs)
+      AskEffect.ListenForReply -> {
+        chime.play()
+        record(WakeListener.CHIME_SKIP_MS, waitForSpeechMs = REPLY_WAIT_MS)
+      }
       AskEffect.StopRecording -> stopRecording = true
       is AskEffect.Speak -> speaker.speak(e.text)
       null -> Unit
@@ -302,12 +306,12 @@ class MuseController(private val context: Context) {
     heyMuse.post(WakeInput.Asking(now))
   }
 
-  private fun record(skipMs: Int) {
+  private fun record(skipMs: Int, waitForSpeechMs: Int = Int.MAX_VALUE) {
     speaker.stop()
     stopRecording = false
     thread(name = "muse-mic") {
       heyMuse.awaitMicFree(MIC_HANDOFF_MS)
-      recorded(Microphone.record(skipMs, { stopRecording }) { level -> step(AskInput.Level(level)) })
+      recorded(Microphone.record(skipMs, { stopRecording }, waitForSpeechMs) { level -> step(AskInput.Level(level)) })
     }
   }
 
@@ -330,6 +334,7 @@ class MuseController(private val context: Context) {
     const val HEALTHY_MS = 60_000L
     const val MAX_BACKOFF_MS = 30_000L
     const val MIC_HANDOFF_MS = 1_000L
+    const val REPLY_WAIT_MS = 6_000
 
     val logger = Logger { level, message ->
       when (level) {
