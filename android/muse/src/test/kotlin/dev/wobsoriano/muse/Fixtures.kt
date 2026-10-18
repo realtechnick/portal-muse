@@ -12,7 +12,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
-/** The vectors the Go code wrote (core/internal/muse/vectors_test.go), committed beside the tests. */
+/** The vectors musecore wrote before it was removed (resources/vectors/README.md). */
 object Fixtures {
   fun text(name: String): String =
       checkNotNull(Fixtures::class.java.getResource("/vectors/$name")) { "no fixture $name" }.readText()

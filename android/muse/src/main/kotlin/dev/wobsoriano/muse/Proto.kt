@@ -1,6 +1,6 @@
 // Ported from linux/src/musegadget/noise/_proto.py in Meta's Muse Gadget SDK, Copyright (c) Meta
-// Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0 (LICENSE in this
-// directory). Modified: rewritten in Kotlin, keeping only the wire types the Muse messages use.
+// Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0 (LICENSE at the
+// root of this module). Modified: rewritten in Kotlin, keeping only the wire types the Muse messages use.
 
 package dev.wobsoriano.muse
 

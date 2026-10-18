@@ -1,6 +1,6 @@
 // Ported from linux/src/musegadget/muse_api.py in Meta's Muse Gadget SDK, Copyright (c) Meta
-// Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0 (LICENSE in this
-// directory). Modified: rewritten in Kotlin, and a failure is returned to the caller where the SDK
+// Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0 (LICENSE at the
+// root of this module). Modified: rewritten in Kotlin, and a failure is returned to the caller where the SDK
 // logged it.
 
 package dev.wobsoriano.muse

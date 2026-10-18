@@ -9,7 +9,7 @@ import org.junit.Test
 
 /**
  * The Kotlin port against what the Go code produced for the same inputs. The vectors are committed
- * under src/test/resources/vectors; core/internal/muse/vectors_test.go wrote them.
+ * under src/test/resources/vectors, whose README says where they came from.
  */
 class VectorTest {
   @Test

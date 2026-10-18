@@ -205,7 +205,7 @@ class Checks(
         }
       }
 
-  // musecore runs as a child process, so the app must be able to fork and exec.
+  // Who the app runs as, on what build, as a shell it starts sees it.
   private fun exec() =
       report.section("exec") {
         val p =

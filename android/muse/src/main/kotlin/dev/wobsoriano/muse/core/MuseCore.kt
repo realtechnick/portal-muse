@@ -267,7 +267,7 @@ class MuseCore(
     val err =
         select<Throwable?> {
           reply.onAwait { it }
-          finished.onJoin { StoppingException("musecore is stopping") }
+          finished.onJoin { StoppingException("the Muse core is stopping") }
         }
     if (err != null) throw err
   }

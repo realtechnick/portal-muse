@@ -1,6 +1,6 @@
 // Ported from linux/src/musegadget/link_client.py in Meta's Muse Gadget SDK, Copyright (c) Meta
-// Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0 (LICENSE in this
-// directory). Modified: rewritten in Kotlin, and extended with a chat subscription that waits for the
+// Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0 (LICENSE at the
+// root of this module). Modified: rewritten in Kotlin, and extended with a chat subscription that waits for the
 // reply, a voice note upload, and an early "settled" signal. The SDK's Linux client has none of
 // these. They speak the protocol that the SDK's ESP32 firmware speaks (esp32/components/muse, under
 // the same license).

@@ -1,6 +1,6 @@
 // Extends linux/src/musegadget/link_client.py in Meta's Muse Gadget SDK, Copyright (c) Meta
-// Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0 (LICENSE in this
-// directory). Modified: rewritten in Kotlin, with reply matching added, and the stored user message's
+// Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0 (LICENSE at the
+// root of this module). Modified: rewritten in Kotlin, with reply matching added, and the stored user message's
 // text kept as what Muse heard. The SDK's Linux client has no reply matching. This one reads the chat
 // events that the SDK's ESP32 firmware reads (esp32/components/muse, under the same license).
 

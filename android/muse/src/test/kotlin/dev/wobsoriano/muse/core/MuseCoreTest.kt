@@ -39,7 +39,7 @@ private fun b64(b: ByteArray) = Base64.getEncoder().encodeToString(b)
 
 /**
  * The app's side, driving a real core. Every call the core makes is written down as the line musecore
- * printed for it (PROTOCOL.md), so the expected values below are core_test.go's own.
+ * printed for it on stdout, so the expected values below are core_test.go's own.
  */
 class App(dir: File) : CoreListener, BlePeripheral {
   val lines = LinkedBlockingQueue<String>()

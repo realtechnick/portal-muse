@@ -26,7 +26,7 @@ import org.junit.Test
 
 /**
  * Whole pairing conversations that musecore's Controller held with a phone (the Go vectors in
- * src/test/resources/vectors/pairing.json, written by core/internal/muse/pairing/vectors_test.go),
+ * src/test/resources/vectors/pairing.json; its README says where they came from),
  * replayed into the Kotlin Controller with the same random streams. Every notification has to come
  * out byte for byte as Go sent it: the framing, the handshake, the records and the JSON inside them.
  */

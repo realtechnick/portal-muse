@@ -1,6 +1,6 @@
 // Ported from linux/src/musegadget/noise/envelope.py, framing.py and transport.py in Meta's Muse
 // Gadget SDK, Copyright (c) Meta Platforms, Inc. and affiliates, licensed under the Apache License,
-// Version 2.0 (LICENSE in this directory). Modified: rewritten in Kotlin, with the four frame kinds
+// Version 2.0 (LICENSE at the root of this module). Modified: rewritten in Kotlin, with the four frame kinds
 // folded into one type.
 
 package dev.wobsoriano.muse
