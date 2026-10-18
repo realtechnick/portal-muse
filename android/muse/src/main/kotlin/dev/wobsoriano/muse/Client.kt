@@ -12,6 +12,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -54,7 +55,7 @@ private fun commandSpecs(commands: List<Command>): Pair<JsonObject, Map<String, 
         c.name in byName -> throw IllegalArgumentException("muse: command \"${c.name}\" is listed twice")
       }
       val names = HashSet<String>()
-      fun params(into: String, list: List<Param>) = putJsonObject(into) {
+      fun JsonObjectBuilder.params(into: String, list: List<Param>) = putJsonObject(into) {
         for (p in list) {
           if (p.name.isEmpty() || !names.add(p.name)) throw IllegalArgumentException("muse: command \"${c.name}\" has a bad parameter \"${p.name}\"")
           putJsonObject(p.name) {
