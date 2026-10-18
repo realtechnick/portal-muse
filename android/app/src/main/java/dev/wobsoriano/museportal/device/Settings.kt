@@ -14,9 +14,15 @@ class Settings(context: Context) {
     get() = prefs.getString(KEY_TOKEN, null).orEmpty()
     set(value) = prefs.edit().putString(KEY_TOKEN, value.trim()).apply()
 
+  /** The "Hey Muse" switch. */
+  var wakeEnabled: Boolean
+    get() = prefs.getBoolean(KEY_WAKE, false)
+    set(value) = prefs.edit().putBoolean(KEY_WAKE, value).apply()
+
   private companion object {
     const val DEFAULT_NAME = "Portal"
     const val KEY_NAME = "name"
     const val KEY_TOKEN = "sdkToken"
+    const val KEY_WAKE = "wakeEnabled"
   }
 }

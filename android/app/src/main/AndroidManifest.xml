@@ -42,5 +42,12 @@
         <action android:name="android.intent.action.BOOT_COMPLETED" />
       </intent-filter>
     </receiver>
+
+    <receiver android:name=".heymuse.PortalWakeReceiver" android:exported="true">
+      <intent-filter>
+        <action android:name="com.portal.wake.action.WAKE" />
+      </intent-filter>
+      <meta-data android:name="com.portal.wake.phrase" android:value="hey muse" />
+    </receiver>
   </application>
 </manifest>

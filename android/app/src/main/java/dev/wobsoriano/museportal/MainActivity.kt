@@ -24,10 +24,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -48,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.wobsoriano.museportal.ask.AskState
+import dev.wobsoriano.museportal.heymuse.WakeState
 import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.PairState
 
@@ -80,13 +83,14 @@ class MainActivity : ComponentActivity() {
     applyExtras(intent)
   }
 
-  // Lets adb set the token without the Portal's on-screen keyboard, and ask without the mic:
-  // `am start -n .../.MainActivity --es sdkToken mgst_... --es ask "what time is it"`.
+  // Lets adb set the token without the Portal's on-screen keyboard, ask without the mic and flip the
+  // wake word: `am start -n .../.MainActivity --es sdkToken mgst_... --es ask "what time is it" --ez heyMuse true`.
   private fun applyExtras(intent: Intent?) {
     val name = intent?.getStringExtra("name")
     val token = intent?.getStringExtra("sdkToken")
     if (name != null || token != null) muse.saveSettings(name ?: muse.state.value.name, token)
     intent?.getStringExtra("ask")?.let(muse::ask)
+    if (intent?.hasExtra("heyMuse") == true) muse.setWakeEnabled(intent.getBooleanExtra("heyMuse", false))
   }
 }
 
@@ -102,6 +106,7 @@ private fun MuseScreen(state: MuseState, muse: MuseController) {
           Text("Muse", fontSize = 56.sp, fontWeight = FontWeight.Bold)
           val (status, color) = statusLine(state)
           Text(status, fontSize = Big, color = color)
+          HeyMusePanel(state, muse)
           PairingPanel(state, muse)
           SettingsPanel(state, muse)
         }
@@ -111,7 +116,9 @@ private fun MuseScreen(state: MuseState, muse: MuseController) {
         verticalArrangement = Arrangement.Center) {
           MicButton(state.ask, enabled = state.core == CoreState.Running, onTap = muse::tapMic)
           Spacer(Modifier.height(36.dp))
-          Box(Modifier.height(300.dp), contentAlignment = Alignment.TopCenter) { AskText(state.ask, state.canSpeak) }
+          Box(Modifier.height(300.dp), contentAlignment = Alignment.TopCenter) {
+            AskText(state.ask, state.canSpeak, heyMuse = state.wake == WakeState.Listening || state.wake == WakeState.Delegated)
+          }
         }
   }
 }
@@ -131,6 +138,36 @@ private fun statusLine(state: MuseState): Pair<String, Color> {
           Phase.Online -> "Online" to ok
           Phase.Offline -> "Offline: ${state.connection.error.ifEmpty { "no connection" }}" to bad
         }
+  }
+}
+
+@Composable
+private fun HeyMusePanel(state: MuseState, muse: MuseController) {
+  val dim = Color(0xFFB0B8C0)
+  val (text, color) =
+      when (val wake = state.wake) {
+        WakeState.Off -> "Ask hands-free by saying “Hey Muse”" to dim
+        is WakeState.Downloading ->
+            (if (wake.fraction == null) "Downloading the speech model (41 MB)"
+            else "Downloading the speech model, ${(wake.fraction * 100).toInt()}%") to dim
+        WakeState.Loading -> "Loading the speech model" to dim
+        WakeState.Listening -> "Listening for “Hey Muse”" to Color(0xFF7BD88F)
+        WakeState.Yielded -> "Paused while another app uses the microphone" to Color(0xFFFFC66D)
+        WakeState.Asking -> "Listening again after the answer" to dim
+        WakeState.Delegated -> "portal-wake listens for “Hey Muse”" to Color(0xFF7BD88F)
+        is WakeState.Failed -> "${wake.reason}. Turn it off and on to try again." to Color(0xFFFF6B6B)
+      }
+  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+      Text("Hey Muse", fontSize = Big)
+      Switch(checked = state.wakeEnabled, onCheckedChange = muse::setWakeEnabled, modifier = Modifier.scale(1.5f))
+    }
+    Text(text, fontSize = 24.sp, color = color)
+    val wake = state.wake
+    if (wake is WakeState.Downloading) {
+      if (wake.fraction == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+      else LinearProgressIndicator(progress = { wake.fraction }, modifier = Modifier.fillMaxWidth())
+    }
   }
 }
 
@@ -226,11 +263,11 @@ private fun MicButton(ask: AskState, enabled: Boolean, onTap: () -> Unit) {
 }
 
 @Composable
-private fun AskText(ask: AskState, canSpeak: Boolean) {
+private fun AskText(ask: AskState, canSpeak: Boolean, heyMuse: Boolean) {
   val dim = Color(0xFFB0B8C0)
   Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
     when (ask) {
-      AskState.Idle -> Text("Tap and ask a question", fontSize = Big, color = dim)
+      AskState.Idle -> Text(if (heyMuse) "Tap or say “Hey Muse”" else "Tap and ask a question", fontSize = Big, color = dim)
       is AskState.Recording -> Text("Listening", fontSize = Big)
       is AskState.Sending -> Text("Thinking", fontSize = Big, color = dim)
       is AskState.Heard -> {

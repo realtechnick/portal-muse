@@ -85,4 +85,49 @@ class AskStateTest {
     val last = run(AskInput.Tap, AskInput.Sent("a1"), reply(ReplyKind.Done, "Hi."), AskInput.Sent("a2")).last()
     assertEquals(AskStep(AskState.Sending("a2")), last)
   }
+
+  @Test
+  fun aWakeRecordsOnTheListenersMicOrItsOwn() {
+    assertEquals(AskStep(AskState.Recording()), run(AskInput.Wake(listenerRecords = true)).last())
+    assertEquals(AskStep(AskState.Recording(), AskEffect.StartRecording), run(AskInput.Wake(listenerRecords = false)).last())
+  }
+
+  @Test
+  fun aWakeWhileRecordingIsIgnored() {
+    assertEquals(AskStep(AskState.Recording()), run(AskInput.Tap, AskInput.Wake(listenerRecords = false)).last())
+  }
+
+  @Test
+  fun anAskIsInFlightUntilItsAnswerIsComplete() {
+    val states = run(AskInput.Tap, AskInput.Sent("a1"), reply(ReplyKind.Text, "Hi"), reply(ReplyKind.Done, "Hi.")).map { it.state.inFlight }
+    assertEquals(listOf(true, true, true, false), states)
+    assertEquals(false, AskState.Failed("no").inFlight)
+  }
+
+  private fun answered(answer: String) = AskState.Answered("a1", "is it raining", answer, complete = true)
+
+  @Test
+  fun aQuestionFromMuseIsListenedToAfterItIsSpoken() {
+    assertEquals(
+        AskStep(AskState.Recording(followUp = true), AskEffect.ListenForReply),
+        answered("Do you want the forecast for tomorrow? ").next(AskInput.Spoken))
+  }
+
+  @Test
+  fun aPlainAnswerEndsTheAskWhenSpoken() {
+    val done = answered("It is not raining.")
+    assertEquals(AskStep(done), done.next(AskInput.Spoken))
+  }
+
+  @Test
+  fun aFollowUpNobodyAnswersEndsQuietly() {
+    assertEquals(
+        AskStep(AskState.Idle),
+        AskState.Recording(followUp = true).next(AskInput.NotSent("I didn't hear anything")))
+  }
+
+  @Test
+  fun aFollowUpReplyIsSentLikeAnyQuestion() {
+    assertEquals(AskStep(AskState.Sending("a2")), AskState.Recording(0.3f, followUp = true).next(AskInput.Sent("a2")))
+  }
 }

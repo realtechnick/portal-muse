@@ -3,11 +3,12 @@ package dev.wobsoriano.museportal.ask
 import dev.wobsoriano.muse.core.AskUpdate
 import dev.wobsoriano.muse.core.ReplyKind
 
-/** One tap-to-talk question, from the mic to the spoken answer. */
+/** One question, from the mic to the spoken answer, started by a tap or by "Hey Muse". */
 sealed interface AskState {
   data object Idle : AskState
 
-  data class Recording(val level: Float = 0f) : AskState
+  /** [followUp]: listening for the answer to a question Muse asked, with no wake word. */
+  data class Recording(val level: Float = 0f, val followUp: Boolean = false) : AskState
 
   data class Sending(val id: String) : AskState
 
@@ -23,6 +24,9 @@ sealed interface AskState {
 sealed interface AskInput {
   data object Tap : AskInput
 
+  /** "Hey Muse" was heard. [listenerRecords]: the wake listener records the question on its own mic. */
+  data class Wake(val listenerRecords: Boolean) : AskInput
+
   data class Level(val level: Float) : AskInput
 
   /** A recording or a typed question went to the core as ask [id]. */
@@ -31,6 +35,9 @@ sealed interface AskInput {
   data class NotSent(val reason: String) : AskInput
 
   data class Reply(val reply: AskUpdate) : AskInput
+
+  /** The answer has finished being spoken. */
+  data object Spoken : AskInput
 }
 
 sealed interface AskEffect {
@@ -39,7 +46,16 @@ sealed interface AskEffect {
   data object StopRecording : AskEffect
 
   data class Speak(val text: String) : AskEffect
+
+  /** Muse asked a question: chime and record the reply, giving up quietly if nobody starts talking. */
+  data object ListenForReply : AskEffect
 }
+
+/** Whether the question is still being recorded or answered; speaking the answer is tracked apart. */
+val AskState.inFlight: Boolean
+  get() =
+      this is AskState.Recording || this is AskState.Sending || this is AskState.Heard ||
+          (this is AskState.Answered && !complete)
 
 data class AskStep(val state: AskState, val effect: AskEffect? = null)
 
@@ -48,10 +64,26 @@ fun AskState.next(input: AskInput): AskStep =
       AskInput.Tap ->
           if (this is AskState.Recording) AskStep(this, AskEffect.StopRecording)
           else AskStep(AskState.Recording(), AskEffect.StartRecording)
+      is AskInput.Wake ->
+          if (this is AskState.Recording) AskStep(this)
+          else AskStep(AskState.Recording(), if (input.listenerRecords) null else AskEffect.StartRecording)
       is AskInput.Level -> AskStep(if (this is AskState.Recording) copy(level = input.level) else this)
       is AskInput.Sent -> AskStep(AskState.Sending(input.id))
-      is AskInput.NotSent -> AskStep(if (this is AskState.Recording) AskState.Failed(input.reason) else this)
+      is AskInput.NotSent ->
+          AskStep(
+              when {
+                this !is AskState.Recording -> this
+                followUp -> AskState.Idle
+                else -> AskState.Failed(input.reason)
+              })
       is AskInput.Reply -> onReply(input.reply)
+      // As hey-muse does on the Echo: an answer that ends in a question is listened to without a wake word.
+      AskInput.Spoken ->
+          if (this is AskState.Answered && complete && answer.trimEnd().endsWith("?")) {
+            AskStep(AskState.Recording(followUp = true), AskEffect.ListenForReply)
+          } else {
+            AskStep(this)
+          }
     }
 
 private fun AskState.onReply(reply: AskUpdate): AskStep {
