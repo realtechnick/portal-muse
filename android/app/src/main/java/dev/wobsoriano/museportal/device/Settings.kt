@@ -2,7 +2,7 @@ package dev.wobsoriano.museportal.device
 
 import android.content.Context
 
-/** The user's settings, in app-private preferences. The token never leaves this file except into `config`. */
+/** The user's settings, in app-private preferences. The token never leaves this file except into the core's config. */
 class Settings(context: Context) {
   private val prefs = context.getSharedPreferences("muse", Context.MODE_PRIVATE)
 

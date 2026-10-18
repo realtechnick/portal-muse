@@ -1,13 +1,13 @@
 package dev.wobsoriano.museportal.ask
 
-import dev.wobsoriano.museportal.protocol.Event
-import dev.wobsoriano.museportal.protocol.ReplyKind
+import dev.wobsoriano.muse.core.AskUpdate
+import dev.wobsoriano.muse.core.ReplyKind
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AskStateTest {
   private fun reply(kind: ReplyKind, text: String = "", error: String = "", id: String = "a1") =
-      AskInput.Reply(Event.Reply(id, kind, text, error))
+      AskInput.Reply(AskUpdate(id, kind, text, error))
 
   private fun run(vararg inputs: AskInput): List<AskStep> {
     var state: AskState = AskState.Idle

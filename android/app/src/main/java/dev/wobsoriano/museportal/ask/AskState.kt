@@ -1,7 +1,7 @@
 package dev.wobsoriano.museportal.ask
 
-import dev.wobsoriano.museportal.protocol.Event
-import dev.wobsoriano.museportal.protocol.ReplyKind
+import dev.wobsoriano.muse.core.AskUpdate
+import dev.wobsoriano.muse.core.ReplyKind
 
 /** One tap-to-talk question, from the mic to the spoken answer. */
 sealed interface AskState {
@@ -25,12 +25,12 @@ sealed interface AskInput {
 
   data class Level(val level: Float) : AskInput
 
-  /** A recording or a typed question went to musecore as `ask` [id]. */
+  /** A recording or a typed question went to the core as ask [id]. */
   data class Sent(val id: String) : AskInput
 
   data class NotSent(val reason: String) : AskInput
 
-  data class Reply(val reply: Event.Reply) : AskInput
+  data class Reply(val reply: AskUpdate) : AskInput
 }
 
 sealed interface AskEffect {
@@ -54,7 +54,7 @@ fun AskState.next(input: AskInput): AskStep =
       is AskInput.Reply -> onReply(input.reply)
     }
 
-private fun AskState.onReply(reply: Event.Reply): AskStep {
+private fun AskState.onReply(reply: AskUpdate): AskStep {
   val asked =
       when (this) {
         is AskState.Sending -> AskState.Answered(id, "", "", complete = false)
