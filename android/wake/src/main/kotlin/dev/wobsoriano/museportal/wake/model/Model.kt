@@ -172,8 +172,11 @@ internal class Table(val bytes: ByteBuffer, val pos: Int) {
   fun byteVector(off: Int): ByteArray {
     val o = off + bytes.getInt(off)
     val length = bytes.getInt(o)
-    return ByteArray(length).also { bytes.get(o + 4, it) }
+    return bytesAt(o + 4, length)
   }
+
+  // The buffer always wraps the whole model array from index 0, so absolute positions index it.
+  fun bytesAt(start: Int, length: Int): ByteArray = bytes.array().copyOfRange(start, start + length)
 
   /** The table whose offset is stored at the element starting at [elemOff]. */
   fun indirect(elemOff: Int): Table = Table(bytes, elemOff + bytes.getInt(elemOff))
@@ -207,7 +210,7 @@ private fun parseBuffers(root: Table): List<Buffer> {
     var data: ByteArray? = null
     if (dOff != 0) {
       val dLen = bufTab.vectorLen(dOff)
-      if (dLen > 0) data = ByteArray(dLen).also { root.bytes.get(bufTab.vector(dOff), it) }
+      if (dLen > 0) data = root.bytesAt(bufTab.vector(dOff), dLen)
     }
     Buffer(data)
   }
@@ -296,7 +299,7 @@ private fun parseOperator(tab: Table, opCodes: IntArray): Operator {
   var customOptions: ByteArray? = null
   if (o != 0) {
     val n = tab.vectorLen(o)
-    if (n > 0) customOptions = ByteArray(n).also { tab.bytes.get(tab.vector(o), it) }
+    if (n > 0) customOptions = tab.bytesAt(tab.vector(o), n)
   }
   return Operator(opCode, inputs, outputs, options, customOptions)
 }
