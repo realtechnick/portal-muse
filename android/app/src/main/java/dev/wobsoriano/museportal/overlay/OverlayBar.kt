@@ -33,7 +33,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,7 +53,6 @@ import dev.wobsoriano.museportal.MuseState
 import dev.wobsoriano.museportal.avatar.AvatarLoad
 import dev.wobsoriano.museportal.ui.Character
 import dev.wobsoriano.museportal.ui.MuseTheme
-import dev.wobsoriano.museportal.ui.Palette
 import dev.wobsoriano.museportal.ui.level
 import dev.wobsoriano.museportal.ui.mood
 import dev.wobsoriano.museportal.ui.statusLine
@@ -66,8 +69,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * The slim bar a turn shows over whatever is in front, usually Immortal's home screen or photo frame,
+ * The card a turn shows over whatever is in front, usually Immortal's home screen or photo frame,
  * when our own screen isn't. It needs "display over other apps"; without it nothing shows.
+ *
+ * It is drawn as light glass to match the glass launcher. Android 9 gives an overlay no way to blur
+ * the app beneath it, so the glass is a white tint, a bright rim and a shadow, without blur.
  */
 class OverlayBar(private val context: Context, private val state: StateFlow<MuseState>, private val avatar: StateFlow<AvatarLoad>) {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -112,7 +118,7 @@ class OverlayBar(private val context: Context, private val state: StateFlow<Muse
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT)
-            .apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL }
+            .apply { gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL }
     try {
       windows.addView(v, params)
       view = v
@@ -148,15 +154,16 @@ class OverlayBar(private val context: Context, private val state: StateFlow<Muse
         }
       }
     }
-    AnimatedVisibility(shown, enter = slideInVertically { -it } + fadeIn(), exit = slideOutVertically { -it } + fadeOut()) {
+    AnimatedVisibility(shown, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
       val turn = s.ask.turnText
-      Box(Modifier.padding(top = 20.dp, start = 16.dp, end = 16.dp, bottom = 8.dp)) {
+      Box(Modifier.padding(top = 24.dp, start = 16.dp, end = 16.dp, bottom = 40.dp)) {
         Row(
             Modifier.width(BAR_WIDTH_DP.dp)
                 .heightIn(min = 136.dp)
-                .clip(RoundedCornerShape(32.dp))
-                .background(Palette.Card.copy(alpha = 0.97f))
-                .border(1.dp, Palette.Line, RoundedCornerShape(32.dp))
+                .shadow(28.dp, GlassShape)
+                .clip(GlassShape)
+                .background(GlassFill)
+                .border(GlassRim, GlassShape)
                 .clickable { context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                 .padding(horizontal = 24.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -169,7 +176,7 @@ class OverlayBar(private val context: Context, private val state: StateFlow<Muse
                 Text(
                     if (heard.isNotEmpty()) "“$heard”" else s.statusLine.ifEmpty { "Muse" },
                     style = if (heard.isNotEmpty()) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleLarge,
-                    color = if (heard.isNotEmpty()) Palette.Dim else Palette.Text,
+                    color = if (heard.isNotEmpty()) InkDim else Ink,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis)
                 val answer = turn?.answer.orEmpty()
@@ -177,11 +184,11 @@ class OverlayBar(private val context: Context, private val state: StateFlow<Muse
                   Text(
                       answer,
                       style = MaterialTheme.typography.titleLarge,
-                      color = if (turn?.failed == true) Palette.Bad else Palette.Text,
+                      color = if (turn?.failed == true) InkBad else Ink,
                       maxLines = 2,
                       overflow = TextOverflow.Ellipsis)
                 } else if (heard.isNotEmpty()) {
-                  Text(s.statusLine, style = MaterialTheme.typography.titleLarge)
+                  Text(s.statusLine, style = MaterialTheme.typography.titleLarge, color = Ink)
                 }
               }
             }
@@ -212,5 +219,11 @@ class OverlayBar(private val context: Context, private val state: StateFlow<Muse
   private companion object {
     const val TAG = "MuseOverlay"
     const val BAR_WIDTH_DP = 880
+    val GlassShape = RoundedCornerShape(40.dp)
+    val GlassFill = Brush.verticalGradient(listOf(Color(0xF5FFFFFF), Color(0xE0EEF2FA)))
+    val GlassRim = BorderStroke(1.5.dp, Brush.verticalGradient(listOf(Color.White, Color(0x99FFFFFF))))
+    val Ink = Color(0xFF12141C)
+    val InkDim = Color(0xFF5D6378)
+    val InkBad = Color(0xFFB3261E)
   }
 }
