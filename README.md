@@ -3,6 +3,41 @@
 Meta's Muse on a Meta Portal (first generation, Android 9), as a sideloaded Android app. No root:
 Portal's bootloader stays locked, and Meta's own ADB support is all it needs.
 
+### Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/home-ready.png" alt="Home screen with Muse waiting"><br><sub><b>Home</b>: Muse waits for "Hey Muse" or a tap</sub></td>
+    <td width="50%"><img src="docs/img/home-answered.png" alt="Home screen with an answer"><br><sub><b>Answer</b>: the question small, Muse's answer under it, spoken aloud</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/img/overlay.png" alt="Muse bar over Immortal's home screen"><br><sub><b>Anywhere</b>: say "Hey Muse" from another app and a bar shows the turn over it</sub></td>
+  </tr>
+</table>
+
+#### Setting up
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/setup-1-token.png" alt="Setup step 1: Muse token"><br><sub><b>1. Token</b>: paste the SDK token from gadgets.muse.ai</sub></td>
+    <td width="50%"><img src="docs/img/setup-2-name.png" alt="Setup step 2: name"><br><sub><b>2. Name</b>: how this Portal shows up in the Muse app</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/setup-3-pair.png" alt="Setup step 3: pairing"><br><sub><b>3. Pair</b>: add the Portal from the Muse phone app over Bluetooth</sub></td>
+    <td width="50%"><img src="docs/img/setup-4-heymuse.png" alt="Setup step 4: Hey Muse"><br><sub><b>4. Hey Muse</b>: turn on hands-free listening</sub></td>
+  </tr>
+</table>
+
+#### Settings
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/img/settings-1.png" alt="Settings: Hey Muse and voice"><br><sub><b>Hey Muse and voice</b></sub></td>
+    <td width="33%"><img src="docs/img/settings-2.png" alt="Settings: speaking rate and device"><br><sub><b>Speaking rate and device</b></sub></td>
+    <td width="33%"><img src="docs/img/settings-3.png" alt="Settings: token, unpair and about"><br><sub><b>Token, unpair and about</b></sub></td>
+  </tr>
+</table>
+
 - `android/muse` is the Muse library, plain Kotlin with no Android code, so its tests run on a PC. It
   holds the Muse client and the gadget pairing protocol, ported to Kotlin from the Go core of
   [hey-muse](https://github.com/wobsoriano/hey-muse), the TECHO5 fork that runs Muse on Echo devices.
@@ -17,7 +52,7 @@ Portal's bootloader stays locked, and Meta's own ADB support is all it needs.
 
 ## Status
 
-Tap the mic to ask, or turn on **Hey Muse** to ask hands-free. The first time it is turned on, the
+Tap Muse to ask, or turn on **Hey Muse** to ask hands-free. The first time it is turned on, the
 app downloads Vosk's `vosk-model-small-en-us-0.15` (41 MB, checked against a pinned SHA-256) into
 its files directory. The listener runs in the app's foreground service and starts at boot when it is
 on. It lets go of the microphone while another app records. If
