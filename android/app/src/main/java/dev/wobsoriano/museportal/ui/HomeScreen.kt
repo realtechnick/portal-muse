@@ -1,0 +1,129 @@
+package dev.wobsoriano.museportal.ui
+
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import dev.wobsoriano.museportal.MuseState
+import dev.wobsoriano.museportal.ask.AskState
+import dev.wobsoriano.museportal.avatar.AvatarSet
+
+/** What the turn has to say: the question as heard and the answer so far, or why it failed. */
+data class TurnText(val heard: String, val answer: String, val failed: Boolean)
+
+val AskState.turnText: TurnText?
+  get() =
+      when (this) {
+        is AskState.Heard -> TurnText(heard, "", false)
+        is AskState.Answered -> TurnText(heard, answer, false).takeIf { heard.isNotEmpty() || answer.isNotEmpty() }
+        is AskState.Failed -> TurnText("", reason, true)
+        else -> null
+      }
+
+/**
+ * The screen a room sees: the character (or the orb) in the middle, one line beneath it, and the turn's
+ * words under that. Tapping the character asks; the rest of the screen ignores taps, so waking the
+ * screen or brushing it doesn't start a recording.
+ */
+@Composable
+fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettings: () -> Unit) {
+  val mood = state.mood
+  Box(Modifier.fillMaxSize()) {
+        TopBar(state, onSettings)
+        val turn = state.ask.turnText
+        val side = if (avatar == null && turn != null) 260.dp else 440.dp
+        Column(
+            Modifier.fillMaxSize().padding(top = 72.dp, bottom = 32.dp, start = 64.dp, end = 64.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center) {
+              val dim by animateFloatAsState(if (mood == Mood.Offline) 0.45f else 1f, tween(600), label = "offline")
+              Box(
+                  Modifier.size(side)
+                      .alpha(dim)
+                      .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onTap),
+                  contentAlignment = Alignment.Center) {
+                    Character(mood, state.level, avatar, side)
+                  }
+              Spacer(Modifier.height(16.dp))
+              AnimatedContent(Line(state.statusLine, turn), transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) }, label = "turn") { line ->
+                TurnWords(line, captionOnly = avatar != null)
+              }
+            }
+      }
+}
+
+private data class Line(val status: String, val turn: TurnText?)
+
+@Composable
+private fun TurnWords(line: Line, captionOnly: Boolean) {
+  Column(Modifier.widthIn(max = 1040.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val turn = line.turn
+    if (turn != null && turn.heard.isNotEmpty()) {
+      Text("“${turn.heard}”", style = MaterialTheme.typography.bodyLarge, color = Palette.Faint, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+    if (line.status.isNotEmpty() && (turn == null || turn.answer.isEmpty())) {
+      Text(line.status, style = MaterialTheme.typography.titleLarge, color = Palette.Dim, textAlign = TextAlign.Center)
+    }
+    if (turn != null && turn.answer.isNotEmpty()) {
+      val size = if (captionOnly) 26.sp else if (turn.answer.length > 160) 30.sp else 38.sp
+      Text(
+          turn.answer,
+          fontSize = size,
+          lineHeight = size * 1.3f,
+          color = if (turn.failed) Palette.Bad else if (captionOnly) Palette.Dim else Palette.Text,
+          textAlign = TextAlign.Center,
+          maxLines = if (captionOnly) 3 else 6,
+          overflow = TextOverflow.Ellipsis)
+    }
+  }
+}
+
+@Composable
+private fun TopBar(state: MuseState, onSettings: () -> Unit) {
+  Row(Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically) {
+    val online = state.online
+    val dot by animateColorAsState(if (online) Palette.Good else Palette.Warn, label = "dot")
+    Box(Modifier.size(14.dp).clip(CircleShape).background(dot))
+    Spacer(Modifier.size(14.dp))
+    Text(state.connectionLabel, style = MaterialTheme.typography.bodyLarge, color = if (online) Palette.Faint else Palette.Warn)
+    Spacer(Modifier.weight(1f))
+    IconButton(onClick = onSettings, modifier = Modifier.size(64.dp)) {
+      Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Palette.Dim, modifier = Modifier.size(36.dp))
+    }
+  }
+}

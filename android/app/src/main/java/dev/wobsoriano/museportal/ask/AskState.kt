@@ -8,7 +8,8 @@ sealed interface AskState {
   data object Idle : AskState
 
   /** [followUp]: listening for the answer to a question Muse asked, with no wake word. */
-  data class Recording(val level: Float = 0f, val followUp: Boolean = false) : AskState
+  /** [tapped]: started by a tap on the screen, so leaving the app drops it. */
+  data class Recording(val level: Float = 0f, val followUp: Boolean = false, val tapped: Boolean = false) : AskState
 
   data class Sending(val id: String) : AskState
 
@@ -36,8 +37,14 @@ sealed interface AskInput {
 
   data class Reply(val reply: AskUpdate) : AskInput
 
-  /** The answer has finished being spoken. */
-  data object Spoken : AskInput
+  /** The answer has finished being spoken. [keepListening]: listen for a reply even to a plain answer. */
+  data class Spoken(val keepListening: Boolean = false) : AskInput
+
+  /** The answer or failure has been on screen long enough. */
+  data object Expired : AskInput
+
+  /** The app's screen went to the background. */
+  data object LeftApp : AskInput
 }
 
 sealed interface AskEffect {
@@ -63,7 +70,10 @@ fun AskState.next(input: AskInput): AskStep =
     when (input) {
       AskInput.Tap ->
           if (this is AskState.Recording) AskStep(this, AskEffect.StopRecording)
-          else AskStep(AskState.Recording(), AskEffect.StartRecording)
+          else AskStep(AskState.Recording(tapped = true), AskEffect.StartRecording)
+      // A tapped question nobody asked out loud shouldn't follow the user to the home screen.
+      AskInput.LeftApp ->
+          if (this is AskState.Recording && tapped) AskStep(AskState.Idle, AskEffect.StopRecording) else AskStep(this)
       is AskInput.Wake ->
           if (this is AskState.Recording) AskStep(this)
           else AskStep(AskState.Recording(), if (input.listenerRecords) null else AskEffect.StartRecording)
@@ -78,12 +88,14 @@ fun AskState.next(input: AskInput): AskStep =
               })
       is AskInput.Reply -> onReply(input.reply)
       // As hey-muse does on the Echo: an answer that ends in a question is listened to without a wake word.
-      AskInput.Spoken ->
-          if (this is AskState.Answered && complete && answer.trimEnd().endsWith("?")) {
+      is AskInput.Spoken ->
+          if (this is AskState.Answered && complete && (input.keepListening || answer.trimEnd().endsWith("?"))) {
             AskStep(AskState.Recording(followUp = true), AskEffect.ListenForReply)
           } else {
             AskStep(this)
           }
+      AskInput.Expired ->
+          AskStep(if (this is AskState.Failed || (this is AskState.Answered && complete)) AskState.Idle else this)
     }
 
 private fun AskState.onReply(reply: AskUpdate): AskStep {

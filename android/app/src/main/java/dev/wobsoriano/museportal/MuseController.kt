@@ -8,6 +8,7 @@ import android.util.Log
 import dev.wobsoriano.muse.FileStore
 import dev.wobsoriano.muse.Level
 import dev.wobsoriano.muse.Logger
+import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.AskUpdate
 import dev.wobsoriano.muse.core.BleEvents
 import dev.wobsoriano.muse.core.CoreConfig
@@ -31,6 +32,12 @@ import dev.wobsoriano.museportal.heymuse.WakeHost
 import dev.wobsoriano.museportal.heymuse.WakeInput
 import dev.wobsoriano.museportal.heymuse.WakeListener
 import dev.wobsoriano.museportal.heymuse.WakeState
+import dev.wobsoriano.museportal.audio.VoiceOption
+import dev.wobsoriano.museportal.setup.Screen
+import dev.wobsoriano.museportal.setup.SdkToken
+import dev.wobsoriano.museportal.setup.SetupFacts
+import dev.wobsoriano.museportal.setup.SetupProgress
+import dev.wobsoriano.museportal.setup.screen
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -63,14 +70,33 @@ data class MuseState(
     val connection: Status? = null,
     /** The last pairing status, or null when pairing was never opened. */
     val pairing: PairStatus? = null,
+    /** Whether the core holds a pairing, kept across core restarts; null until it first says. */
+    val paired: Boolean? = null,
     val ask: AskState = AskState.Idle,
+    /** The answer is being read out. */
+    val speaking: Boolean = false,
     val name: String = "",
+    val named: Boolean = false,
     val hasToken: Boolean = false,
+    /** The token as the screen may show it: `mgst_…` and its last four characters. */
+    val tokenHint: String = "",
+    val setup: SetupProgress = SetupProgress.NotStarted,
     val canSpeak: Boolean = false,
+    /** The voices worth offering; empty when the engine offers no choice. */
+    val voices: List<VoiceOption> = emptyList(),
+    val voice: String? = null,
+    val speechRate: Float = 1f,
     /** The "Hey Muse" switch, and what the listener is doing. */
     val wakeEnabled: Boolean = false,
     val wake: WakeState = WakeState.Off,
-)
+    val keepListening: Boolean = false,
+    /** Our screen is in front, so the overlay isn't needed. */
+    val inFront: Boolean = false,
+    val version: String = "",
+) {
+  val screen: Screen
+    get() = SetupFacts(hasToken, named, paired, setup).screen
+}
 
 /**
  * The one owner of the Muse core, the BLE peripheral, the microphone and the screen state. Lives for
@@ -82,7 +108,14 @@ class MuseController(private val context: Context) {
   private val settings = Settings(context)
   private val _state =
       MutableStateFlow(
-          MuseState(name = settings.name, hasToken = settings.sdkToken.isNotEmpty(), wakeEnabled = settings.wakeEnabled))
+          MuseState(
+              version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "dev",
+              wakeEnabled = settings.wakeEnabled,
+              keepListening = settings.keepListening,
+              voice = settings.voice,
+              speechRate = settings.speechRate,
+              setup = settings.setup)
+              .withSettings())
   val state: StateFlow<MuseState> = _state.asStateFlow()
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -112,7 +145,7 @@ class MuseController(private val context: Context) {
 
   private val listener =
       object : CoreListener {
-        override fun status(status: Status) = _state.update { it.copy(connection = status) }
+        override fun status(status: Status) = _state.update { it.copy(connection = status, paired = status.phase != Phase.Unpaired) }
 
         override fun pairStatus(status: PairStatus) = _state.update { it.copy(pairing = status) }
 
@@ -121,10 +154,17 @@ class MuseController(private val context: Context) {
 
   private val network = NetworkInfo(context) { sendConfig() }
   private val speaker =
-      Speaker(context, onReady = { ok -> _state.update { it.copy(canSpeak = ok) } }) { speaking ->
-        this.speaking = speaking
-        if (!speaking) step(AskInput.Spoken) else updateBusy()
-      }
+      Speaker(
+          context,
+          settings.voice,
+          settings.speechRate,
+          onReady = { info -> _state.update { it.copy(canSpeak = info.ready, voices = info.voices) } }) { speaking ->
+            this.speaking = speaking
+            _state.update { it.copy(speaking = speaking) }
+            if (!speaking) step(AskInput.Spoken(settings.keepListening)) else afterStep()
+          }
+  private var expiry: Job? = null
+  private var expiring: AskState? = null
   private val chime = Chime()
   private var lastConfig: CoreConfig? = null
   @Volatile private var stopRecording = false
@@ -203,7 +243,7 @@ class MuseController(private val context: Context) {
     // A fresh core has no pairing session, so drop whatever the old one left on the air.
     ble.unadvertise()
     _state.update { it.copy(core = CoreState.Running, connection = null, pairing = null) }
-    val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "dev"
+    val version = _state.value.version
     val c = MuseCore(FileStore(File(context.filesDir, "muse.json"), ::syncDir), version, listener, ble, logger)
     core = c
     val config = currentConfig()
@@ -212,11 +252,83 @@ class MuseController(private val context: Context) {
     return c
   }
 
-  fun saveSettings(name: String, sdkToken: String?) {
+  private fun MuseState.withSettings(): MuseState {
+    val token = settings.sdkToken
+    return copy(
+        name = settings.name,
+        named = settings.named,
+        hasToken = token.isNotEmpty(),
+        tokenHint = if (token.isEmpty()) "" else SdkToken.mask(token))
+  }
+
+  fun rename(name: String) {
+    if (name.isBlank()) return
     settings.name = name
-    if (sdkToken != null) settings.sdkToken = sdkToken
-    _state.update { it.copy(name = settings.name, hasToken = settings.sdkToken.isNotEmpty()) }
+    _state.update { it.withSettings() }
     sendConfig()
+  }
+
+  /** A new token restarts a paired Portal's connection, so it reads as connecting until the core says otherwise. */
+  fun saveToken(token: String) {
+    val changed = token != settings.sdkToken
+    settings.sdkToken = token
+    _state.update { s ->
+      s.withSettings().let { if (changed && s.paired == true) it.copy(connection = Status(Phase.Connecting)) else it }
+    }
+    sendConfig()
+  }
+
+  /** The setup screens are showing; from now on a restart resumes them rather than going home. */
+  fun setupShown() {
+    if (settings.setup != SetupProgress.NotStarted) return
+    settings.setup = SetupProgress.Started
+    _state.update { it.copy(setup = SetupProgress.Started) }
+  }
+
+  fun finishSetup() {
+    settings.setup = SetupProgress.Finished
+    _state.update { it.copy(setup = SetupProgress.Finished) }
+  }
+
+  fun setKeepListening(on: Boolean) {
+    settings.keepListening = on
+    _state.update { it.copy(keepListening = on) }
+  }
+
+  fun setVoice(name: String?, rate: Float) {
+    settings.voice = name
+    settings.speechRate = rate
+    speaker.choose(name, rate)
+    _state.update { it.copy(voice = name, speechRate = rate) }
+  }
+
+  fun testVoice() {
+    if (_state.value.ask.inFlight) return
+    speaker.speak("Hi, I'm Muse. This is how I sound.")
+  }
+
+  fun setInFront(inFront: Boolean) {
+    _state.update { it.copy(inFront = inFront) }
+    if (!inFront) step(AskInput.LeftApp)
+  }
+
+  /** What support needs to know, with nothing secret in it. */
+  fun diagnostics(): String {
+    val s = _state.value
+    return listOf(
+            "Muse for Portal ${s.version}",
+            "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}",
+            "Name: ${s.name}",
+            "Token: ${if (s.hasToken) "set" else "not set"}",
+            "Core: ${s.core}",
+            "Connection: ${s.connection?.phase ?: "unknown"}${s.connection?.error?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: ""}",
+            "Pairing: ${s.pairing?.let { "${it.state} ${it.name} ${it.error}".trim() } ?: "not opened"}",
+            "Hey Muse: ${if (s.wakeEnabled) s.wake.toString() else "off"}",
+            "Keep listening: ${s.keepListening}",
+            "TTS: ${if (s.canSpeak) "ready, ${s.voices.size} voices, voice ${s.voice ?: "default"}, rate ${s.speechRate}" else "none"}",
+            "Wi-Fi: ${network.snapshot().ssid.ifEmpty { "unknown" }}",
+        )
+        .joinToString("\n")
   }
 
   /** Network facts may have changed after a permission grant. */
@@ -294,7 +406,30 @@ class MuseController(private val context: Context) {
       is AskEffect.Speak -> speaker.speak(e.text)
       null -> Unit
     }
+    afterStep()
+  }
+
+  private fun afterStep() {
     updateBusy()
+    scheduleExpiry()
+  }
+
+  /** A settled answer or a failure goes back to idle after a while once nothing is being said. */
+  @Synchronized
+  private fun scheduleExpiry() {
+    val ask = _state.value.ask
+    val resting = !speaking && (ask is AskState.Failed || (ask is AskState.Answered && ask.complete))
+    if (resting && ask === expiring) return
+    expiry?.cancel()
+    expiry = null
+    expiring = if (resting) ask else null
+    if (!resting) return
+    val after = if (ask is AskState.Failed) FAILURE_SHOWN_MS else ANSWER_SHOWN_MS
+    expiry =
+        scope.launch {
+          delay(after)
+          step(AskInput.Expired)
+        }
   }
 
   /** Tells the wake listener when an ask starts and when its answer has been spoken. */
@@ -316,6 +451,8 @@ class MuseController(private val context: Context) {
   }
 
   private fun recorded(capture: Capture) {
+    // A recording dropped while it ran (the user left the app) is thrown away, not asked.
+    if (_state.value.ask !is AskState.Recording) return
     val input =
         when (capture) {
           is Capture.Failed -> AskInput.NotSent(capture.reason)
@@ -335,6 +472,8 @@ class MuseController(private val context: Context) {
     const val MAX_BACKOFF_MS = 30_000L
     const val MIC_HANDOFF_MS = 1_000L
     const val REPLY_WAIT_MS = 6_000
+    const val ANSWER_SHOWN_MS = 20_000L
+    const val FAILURE_SHOWN_MS = 8_000L
 
     val logger = Logger { level, message ->
       when (level) {

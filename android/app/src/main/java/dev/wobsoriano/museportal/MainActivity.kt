@@ -1,62 +1,57 @@
 package dev.wobsoriano.museportal
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.wobsoriano.museportal.ask.AskState
-import dev.wobsoriano.museportal.heymuse.WakeState
 import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.PairState
+import dev.wobsoriano.muse.core.PairStatus
+import dev.wobsoriano.muse.core.Status
+import dev.wobsoriano.museportal.ask.AskState
+import dev.wobsoriano.museportal.avatar.AvatarLoad
+import dev.wobsoriano.museportal.setup.Screen
+import dev.wobsoriano.museportal.setup.SetupStep
+import dev.wobsoriano.museportal.ui.HomeScreen
+import dev.wobsoriano.museportal.ui.MuseTheme
+import dev.wobsoriano.museportal.ui.Palette
+import dev.wobsoriano.museportal.ui.SettingsActions
+import dev.wobsoriano.museportal.ui.SettingsScreen
+import dev.wobsoriano.museportal.ui.SetupActions
+import dev.wobsoriano.museportal.ui.SetupScreen
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
   private val permissions =
       registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { muse.refreshConfig() }
+  private var canOverlay by mutableStateOf(false)
+  private var settings by mutableStateOf(false)
+  /** A debug build's stand-in for what the screen shows, set by intent extras; null shows the real thing. */
+  private val preview = MutableStateFlow<Preview?>(null)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -69,13 +64,30 @@ class MainActivity : ComponentActivity() {
     if (missing.isNotEmpty()) permissions.launch(missing.toTypedArray())
 
     setContent {
-      MaterialTheme(colorScheme = darkColorScheme()) {
-        Surface(Modifier.fillMaxSize(), color = Color(0xFF101418), contentColor = Color(0xFFF2F4F6)) {
-          val state by muse.state.collectAsStateWithLifecycle()
-          MuseScreen(state, muse)
+      MuseTheme {
+        Surface(Modifier.fillMaxSize(), color = Palette.Ground, contentColor = Palette.Text) {
+          val real by muse.state.collectAsStateWithLifecycle()
+          val previewing by preview.collectAsStateWithLifecycle()
+          val avatar by avatars.load.collectAsStateWithLifecycle()
+          val p = previewing
+          // A preview is for screenshots, so it shows a made-up token rather than the real last four.
+          val state = p?.state?.invoke(real)?.copy(tokenHint = "mgst_…Ab12") ?: real
+          val screen = p?.screen ?: state.screen
+          App(screen, state, avatar, readOnly = p != null)
         }
       }
     }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    canOverlay = android.provider.Settings.canDrawOverlays(this)
+    muse.setInFront(true)
+  }
+
+  override fun onPause() {
+    muse.setInFront(false)
+    super.onPause()
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -83,205 +95,135 @@ class MainActivity : ComponentActivity() {
     applyExtras(intent)
   }
 
+  @Composable
+  private fun App(screen: Screen, state: MuseState, avatar: AvatarLoad, readOnly: Boolean) {
+    LaunchedEffect(screen is Screen.Setup, readOnly) { if (screen is Screen.Setup && !readOnly) muse.setupShown() }
+    val page = if (screen == Screen.Home && settings) Page.Settings else Page.Of(screen)
+    BackHandler(page == Page.Settings) { settings = false }
+    val set = (avatar as? AvatarLoad.Loaded)?.set
+    AnimatedContent(page, transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) }, label = "page") { shown ->
+      when (shown) {
+        Page.Settings ->
+            SettingsScreen(state, canOverlay, avatar, avatars.dir?.path ?: "Android/data/$packageName/files/muse-avatar", settingsActions { settings = false })
+        is Page.Of ->
+            when (val s = shown.screen) {
+              Screen.Loading -> Box(Modifier.fillMaxSize())
+              is Screen.Setup -> SetupScreen(s.step, state, canOverlay, set, if (readOnly) PreviewSetup else setupActions)
+              Screen.Home -> HomeScreen(state, set, onTap = { if (!readOnly) muse.tapMic() }, onSettings = { settings = true })
+            }
+      }
+    }
+  }
+
+  private sealed interface Page {
+    data object Settings : Page
+
+    data class Of(val screen: Screen) : Page
+  }
+
+  private fun requestOverlay() {
+    try {
+      startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+    } catch (e: ActivityNotFoundException) {
+      Toast.makeText(this, "This Portal has no setting for that", Toast.LENGTH_LONG).show()
+    }
+  }
+
+  private val setupActions =
+      object : SetupActions {
+        override fun saveToken(token: String) = muse.saveToken(token)
+
+        override fun rename(name: String) = muse.rename(name)
+
+        override fun pair() = muse.pair()
+
+        override fun setWakeEnabled(on: Boolean) = muse.setWakeEnabled(on)
+
+        override fun requestOverlay() = this@MainActivity.requestOverlay()
+
+        override fun finish() = muse.finishSetup()
+      }
+
+  private fun settingsActions(back: () -> Unit) =
+      object : SettingsActions {
+        override fun back() = back()
+
+        override fun setWakeEnabled(on: Boolean) = muse.setWakeEnabled(on)
+
+        override fun setKeepListening(on: Boolean) = muse.setKeepListening(on)
+
+        override fun requestOverlay() = this@MainActivity.requestOverlay()
+
+        override fun setVoice(name: String?, rate: Float) = muse.setVoice(name, rate)
+
+        override fun testVoice() = muse.testVoice()
+
+        override fun rename(name: String) = muse.rename(name)
+
+        override fun saveToken(token: String) = muse.saveToken(token)
+
+        override fun unpair() = muse.unpair()
+
+        override fun copyDiagnostics() {
+          getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Muse diagnostics", muse.diagnostics()))
+          Toast.makeText(this@MainActivity, "Diagnostics copied", Toast.LENGTH_SHORT).show()
+        }
+      }
+
   // Lets adb set the token without the Portal's on-screen keyboard, ask without the mic and flip the
   // wake word: `am start -n .../.MainActivity --es sdkToken mgst_... --es ask "what time is it" --ez heyMuse true`.
+  // A debug build also previews screens without touching saved state: `--es previewSetup pair`,
+  // `--es previewHome thinking`, `--ez noAvatar true`, `--es page settings`.
   private fun applyExtras(intent: Intent?) {
-    val name = intent?.getStringExtra("name")
-    val token = intent?.getStringExtra("sdkToken")
-    if (name != null || token != null) muse.saveSettings(name ?: muse.state.value.name, token)
+    intent?.getStringExtra("name")?.let(muse::rename)
+    intent?.getStringExtra("sdkToken")?.let(muse::saveToken)
     intent?.getStringExtra("ask")?.let(muse::ask)
     if (intent?.hasExtra("heyMuse") == true) muse.setWakeEnabled(intent.getBooleanExtra("heyMuse", false))
+    intent?.getStringExtra("page")?.let { settings = it == "settings" }
+    if (!BuildConfig.DEBUG || intent == null) return
+    if (intent.getBooleanExtra("noAvatar", false)) avatars.hide() else if (intent.hasExtra("noAvatar")) avatars.reload()
+    preview.value = Preview.of(intent.getStringExtra("previewSetup"), intent.getStringExtra("previewHome"))
   }
 }
 
-private val Big = 30.sp
-private val Huge = 44.sp
-
-@Composable
-private fun MuseScreen(state: MuseState, muse: MuseController) {
-  Row(Modifier.fillMaxSize().padding(48.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
-    Column(
-        Modifier.weight(1f).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(28.dp)) {
-          Text("Muse", fontSize = 56.sp, fontWeight = FontWeight.Bold)
-          val (status, color) = statusLine(state)
-          Text(status, fontSize = Big, color = color)
-          HeyMusePanel(state, muse)
-          PairingPanel(state, muse)
-          SettingsPanel(state, muse)
+/** Fake screens for screenshots: the shown state is made up, and nothing the user saved changes. */
+private class Preview(val screen: Screen?, val state: ((MuseState) -> MuseState)?) {
+  companion object {
+    fun of(setup: String?, home: String?): Preview? {
+      val step = SetupStep.entries.find { it.name.equals(setup, ignoreCase = true) }
+      if (step != null) {
+        return Preview(Screen.Setup(step)) { s ->
+          s.copy(pairing = PairStatus(PairState.Open, "MuseGadget3F9A2C"), wakeEnabled = false, name = "Portal")
         }
-    Column(
-        Modifier.weight(1f).fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center) {
-          MicButton(state.ask, enabled = state.core == CoreState.Running, onTap = muse::tapMic)
-          Spacer(Modifier.height(36.dp))
-          Box(Modifier.height(300.dp), contentAlignment = Alignment.TopCenter) {
-            AskText(state.ask, state.canSpeak, heyMuse = state.wake == WakeState.Listening || state.wake == WakeState.Delegated)
+      }
+      val heard = "what's the weather like tomorrow"
+      val answer = "Tomorrow looks mild and dry, with a high of 21 degrees and a light breeze in the afternoon."
+      val ask: (MuseState) -> MuseState =
+          when (home?.lowercase()) {
+            "ready" -> { s -> s.copy(ask = AskState.Idle, speaking = false) }
+            "hearing" -> { s -> s.copy(ask = AskState.Recording(0.55f)) }
+            "thinking" -> { s -> s.copy(ask = AskState.Heard("p", heard)) }
+            "speaking" -> { s -> s.copy(ask = AskState.Answered("p", heard, answer, complete = true), speaking = true) }
+            "answered" -> { s -> s.copy(ask = AskState.Answered("p", heard, answer, complete = true), speaking = false) }
+            "reply" -> { s -> s.copy(ask = AskState.Recording(0.3f, followUp = true)) }
+            "offline" -> { s -> s.copy(ask = AskState.Idle, connection = Status(Phase.Offline, "no internet")) }
+            else -> return null
           }
-        }
-  }
-}
-
-private fun statusLine(state: MuseState): Pair<String, Color> {
-  val ok = Color(0xFF7BD88F)
-  val warn = Color(0xFFFFC66D)
-  val bad = Color(0xFFFF6B6B)
-  return when (val core = state.core) {
-    is CoreState.Restarting -> "Muse stopped (${core.error}), restarting in ${core.inMs / 1000} s" to warn
-    CoreState.Stopped -> "Stopped" to warn
-    CoreState.Running ->
-        when (state.connection?.phase) {
-          null -> "Starting" to warn
-          Phase.Unpaired -> "Not paired yet" to warn
-          Phase.Connecting -> "Connecting to Muse" to warn
-          Phase.Online -> "Online" to ok
-          Phase.Offline -> "Offline: ${state.connection.error.ifEmpty { "no connection" }}" to bad
-        }
-  }
-}
-
-@Composable
-private fun HeyMusePanel(state: MuseState, muse: MuseController) {
-  val dim = Color(0xFFB0B8C0)
-  val (text, color) =
-      when (val wake = state.wake) {
-        WakeState.Off -> "Ask hands-free by saying “Hey Muse”" to dim
-        is WakeState.Downloading ->
-            (if (wake.fraction == null) "Downloading the speech model (41 MB)"
-            else "Downloading the speech model, ${(wake.fraction * 100).toInt()}%") to dim
-        WakeState.Loading -> "Loading the speech model" to dim
-        WakeState.Listening -> "Listening for “Hey Muse”" to Color(0xFF7BD88F)
-        WakeState.Yielded -> "Paused while another app uses the microphone" to Color(0xFFFFC66D)
-        WakeState.Asking -> "Listening again after the answer" to dim
-        WakeState.Delegated -> "portal-wake listens for “Hey Muse”" to Color(0xFF7BD88F)
-        is WakeState.Failed -> "${wake.reason}. Turn it off and on to try again." to Color(0xFFFF6B6B)
-      }
-  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-      Text("Hey Muse", fontSize = Big)
-      Switch(checked = state.wakeEnabled, onCheckedChange = muse::setWakeEnabled, modifier = Modifier.scale(1.5f))
-    }
-    Text(text, fontSize = 24.sp, color = color)
-    val wake = state.wake
-    if (wake is WakeState.Downloading) {
-      if (wake.fraction == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-      else LinearProgressIndicator(progress = { wake.fraction }, modifier = Modifier.fillMaxWidth())
+      return Preview(Screen.Home, ask)
     }
   }
 }
 
-@Composable
-private fun PairingPanel(state: MuseState, muse: MuseController) {
-  val pairing = state.pairing
-  val gadget = pairing?.name?.ifEmpty { null }
-  val (text, open) =
-      when (pairing?.state) {
-        PairState.Open -> "In the Muse app, add ${gadget ?: "this device"}" to true
-        PairState.Connected -> "Phone connected to ${gadget ?: "this device"}" to true
-        PairState.Paired -> "Paired as ${gadget ?: state.name}" to false
-        PairState.Failed -> "Pairing failed: ${pairing.error}" to false
-        PairState.Closed,
-        null ->
-            (if (state.hasToken) "Pair to add this Portal to the Muse app"
-            else "Enter your SDK token below to pair") to false
-      }
-  Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-    Text(text, fontSize = Big)
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-      val running = state.core == CoreState.Running
-      if (open) {
-        BigButton("Stop pairing", enabled = running) { muse.stopPairing() }
-      } else {
-        BigButton("Pair", enabled = running && state.hasToken) { muse.pair() }
-      }
-      val paired = state.connection != null && state.connection.phase != Phase.Unpaired
-      if (paired && !open) OutlinedButton(onClick = { muse.unpair() }, enabled = running) {
-        Text("Unpair", fontSize = Big)
-      }
-    }
-  }
-}
+private object PreviewSetup : SetupActions {
+  override fun saveToken(token: String) = Unit
 
-@Composable
-private fun SettingsPanel(state: MuseState, muse: MuseController) {
-  var name by remember(state.name) { mutableStateOf(state.name) }
-  var token by remember { mutableStateOf("") }
-  Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-    OutlinedTextField(
-        value = name,
-        onValueChange = { name = it },
-        label = { Text("Device name") },
-        singleLine = true,
-        textStyle = MaterialTheme.typography.headlineSmall,
-        modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(
-        value = token,
-        onValueChange = { token = it },
-        label = { Text(if (state.hasToken) "SDK token (saved)" else "SDK token") },
-        singleLine = true,
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        textStyle = MaterialTheme.typography.headlineSmall,
-        modifier = Modifier.fillMaxWidth())
-    BigButton("Save", enabled = name.isNotBlank()) {
-      muse.saveSettings(name, token.ifBlank { null })
-      token = ""
-    }
-  }
-}
+  override fun rename(name: String) = Unit
 
-@Composable
-private fun BigButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-  Button(onClick = onClick, enabled = enabled, contentPadding = ButtonDefaults.ContentPadding) {
-    Text(label, fontSize = Big, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-  }
-}
+  override fun pair() = Unit
 
-@Composable
-private fun MicButton(ask: AskState, enabled: Boolean, onTap: () -> Unit) {
-  val recording = ask is AskState.Recording
-  val pulse = if (ask is AskState.Recording) 1f + ask.level * 0.15f else 1f
-  Box(contentAlignment = Alignment.Center) {
-    Box(
-        Modifier.size(300.dp)
-            .scale(pulse)
-            .clip(CircleShape)
-            .background(if (recording) Color(0x55FF6B6B) else Color(0x332D9CDB)))
-    Button(
-        onClick = onTap,
-        enabled = enabled,
-        shape = CircleShape,
-        colors =
-            ButtonDefaults.buttonColors(
-                containerColor = if (recording) Color(0xFFE5484D) else Color(0xFF2D9CDB),
-                contentColor = Color.White),
-        modifier = Modifier.size(240.dp)) {
-          Text(if (recording) "Stop" else "Ask", fontSize = Huge, fontWeight = FontWeight.Bold)
-        }
-  }
-}
+  override fun setWakeEnabled(on: Boolean) = Unit
 
-@Composable
-private fun AskText(ask: AskState, canSpeak: Boolean, heyMuse: Boolean) {
-  val dim = Color(0xFFB0B8C0)
-  Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-    when (ask) {
-      AskState.Idle -> Text(if (heyMuse) "Tap or say “Hey Muse”" else "Tap and ask a question", fontSize = Big, color = dim)
-      is AskState.Recording -> Text("Listening", fontSize = Big)
-      is AskState.Sending -> Text("Thinking", fontSize = Big, color = dim)
-      is AskState.Heard -> {
-        Text("“${ask.heard}”", fontSize = Big, color = dim, textAlign = TextAlign.Center)
-        Text("Thinking", fontSize = Big, color = dim)
-      }
-      is AskState.Answered -> {
-        if (ask.heard.isNotEmpty()) {
-          Text("“${ask.heard}”", fontSize = Big, color = dim, textAlign = TextAlign.Center)
-        }
-        Text(ask.answer, fontSize = 36.sp, textAlign = TextAlign.Center)
-        if (ask.complete && !canSpeak) Text("(no text-to-speech on this device)", fontSize = 20.sp, color = dim)
-      }
-      is AskState.Failed -> Text(ask.reason, fontSize = Big, color = Color(0xFFFF6B6B), textAlign = TextAlign.Center)
-    }
-  }
+  override fun requestOverlay() = Unit
+
+  override fun finish() = Unit
 }

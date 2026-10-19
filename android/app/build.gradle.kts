@@ -21,7 +21,10 @@ android {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
   }
-  buildFeatures { compose = true }
+  buildFeatures {
+    compose = true
+    buildConfig = true
+  }
   testOptions { unitTests.isReturnDefaultValues = true }
 }
 
@@ -29,6 +32,7 @@ dependencies {
   implementation(project(":muse"))
   implementation(project(":wake"))
   implementation(libs.vosk.android)
+  implementation(libs.kotlinx.serialization.json)
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material3)

@@ -29,8 +29,8 @@ class AskStateTest {
         )
     assertEquals(
         listOf(
-            AskStep(AskState.Recording(), AskEffect.StartRecording),
-            AskStep(AskState.Recording(0.4f)),
+            AskStep(AskState.Recording(tapped = true), AskEffect.StartRecording),
+            AskStep(AskState.Recording(0.4f, tapped = true)),
             AskStep(AskState.Sending("a1")),
             AskStep(AskState.Heard("a1", "what time is it")),
             AskStep(AskState.Answered("a1", "what time is it", "It is", complete = false)),
@@ -52,7 +52,7 @@ class AskStateTest {
   @Test
   fun tappingWhileRecordingStopsIt() {
     assertEquals(
-        AskStep(AskState.Recording(), AskEffect.StopRecording), run(AskInput.Tap, AskInput.Tap).last())
+        AskStep(AskState.Recording(tapped = true), AskEffect.StopRecording), run(AskInput.Tap, AskInput.Tap).last())
   }
 
   @Test
@@ -77,7 +77,7 @@ class AskStateTest {
   @Test
   fun aNewTapAfterAnAnswerStartsOver() {
     val last = run(AskInput.Tap, AskInput.Sent("a1"), reply(ReplyKind.Done, "Hi."), AskInput.Tap).last()
-    assertEquals(AskStep(AskState.Recording(), AskEffect.StartRecording), last)
+    assertEquals(AskStep(AskState.Recording(tapped = true), AskEffect.StartRecording), last)
   }
 
   @Test
@@ -94,7 +94,7 @@ class AskStateTest {
 
   @Test
   fun aWakeWhileRecordingIsIgnored() {
-    assertEquals(AskStep(AskState.Recording()), run(AskInput.Tap, AskInput.Wake(listenerRecords = false)).last())
+    assertEquals(AskStep(AskState.Recording(tapped = true)), run(AskInput.Tap, AskInput.Wake(listenerRecords = false)).last())
   }
 
   @Test
@@ -110,13 +110,13 @@ class AskStateTest {
   fun aQuestionFromMuseIsListenedToAfterItIsSpoken() {
     assertEquals(
         AskStep(AskState.Recording(followUp = true), AskEffect.ListenForReply),
-        answered("Do you want the forecast for tomorrow? ").next(AskInput.Spoken))
+        answered("Do you want the forecast for tomorrow? ").next(AskInput.Spoken()))
   }
 
   @Test
   fun aPlainAnswerEndsTheAskWhenSpoken() {
     val done = answered("It is not raining.")
-    assertEquals(AskStep(done), done.next(AskInput.Spoken))
+    assertEquals(AskStep(done), done.next(AskInput.Spoken()))
   }
 
   @Test
@@ -129,5 +129,37 @@ class AskStateTest {
   @Test
   fun aFollowUpReplyIsSentLikeAnyQuestion() {
     assertEquals(AskStep(AskState.Sending("a2")), AskState.Recording(0.3f, followUp = true).next(AskInput.Sent("a2")))
+  }
+
+  @Test
+  fun keepListeningHearsAReplyToAPlainAnswerToo() {
+    assertEquals(
+        AskStep(AskState.Recording(followUp = true), AskEffect.ListenForReply),
+        answered("It is not raining.").next(AskInput.Spoken(keepListening = true)))
+  }
+
+  @Test
+  fun aSettledAnswerOrFailureFadesToIdle() {
+    assertEquals(AskStep(AskState.Idle), answered("It is not raining.").next(AskInput.Expired))
+    assertEquals(AskStep(AskState.Idle), AskState.Failed("no").next(AskInput.Expired))
+  }
+
+  @Test
+  fun anAskStillUnderWayDoesNotExpire() {
+    val streaming = AskState.Answered("a1", "", "It is", complete = false)
+    assertEquals(AskStep(streaming), streaming.next(AskInput.Expired))
+    assertEquals(AskStep(AskState.Recording()), AskState.Recording().next(AskInput.Expired))
+  }
+
+  @Test
+  fun leavingTheAppDropsATappedRecording() {
+    assertEquals(
+        AskStep(AskState.Idle, AskEffect.StopRecording), AskState.Recording(0.2f, tapped = true).next(AskInput.LeftApp))
+  }
+
+  @Test
+  fun leavingTheAppKeepsAHeyMuseRecording() {
+    val heard = AskState.Recording(0.2f)
+    assertEquals(AskStep(heard), heard.next(AskInput.LeftApp))
   }
 }
