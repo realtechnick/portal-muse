@@ -6,3 +6,14 @@ android/build/
 android/local.properties
 .idea/
 *.iml
+
+# Never commit secrets or recordings of people.
+*.jks
+*.keystore
+*.p12
+*.pem
+keystore.properties
+signing.properties
+.env
+*.wav
+__pycache__/

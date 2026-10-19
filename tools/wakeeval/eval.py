@@ -67,7 +67,7 @@ def read_labels(path):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model", default=os.environ.get("VOSK_MODEL"), help="unpacked Vosk model dir (or $VOSK_MODEL)")
-    p.add_argument("--wav", default=os.path.join(HERE, "wake1.wav"))
+    p.add_argument("--wav", required=True, help="16 kHz mono 16-bit recording, e.g. the probe's vosk.wav")
     p.add_argument("--labels", help="attempt times in seconds, one per line (default: the WAV's .labels)")
     p.add_argument("--tolerance", type=float, default=1.0, help="seconds between an attempt and the first word")
     p.add_argument("--rule", default=RULE)
