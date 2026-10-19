@@ -307,7 +307,10 @@ class MuseController(private val context: Context) {
     speaker.speak("Hi, I'm Muse. This is how I sound.")
   }
 
-  fun setInFront(inFront: Boolean) = _state.update { it.copy(inFront = inFront) }
+  fun setInFront(inFront: Boolean) {
+    _state.update { it.copy(inFront = inFront) }
+    if (!inFront) step(AskInput.LeftApp)
+  }
 
   /** What support needs to know, with nothing secret in it. */
   fun diagnostics(): String {
@@ -448,6 +451,8 @@ class MuseController(private val context: Context) {
   }
 
   private fun recorded(capture: Capture) {
+    // A recording dropped while it ran (the user left the app) is thrown away, not asked.
+    if (_state.value.ask !is AskState.Recording) return
     val input =
         when (capture) {
           is Capture.Failed -> AskInput.NotSent(capture.reason)

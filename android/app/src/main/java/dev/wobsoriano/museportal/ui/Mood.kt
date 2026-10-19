@@ -70,13 +70,13 @@ val MuseState.statusLine: String
         Mood.Ready -> if (wakeEnabled) wakeLine(wake) else TAP
       }
 
-private const val TAP = "Tap anywhere to ask"
+private const val TAP = "Tap Muse to ask"
 
 private fun wakeLine(wake: WakeState): String =
     when (wake) {
       WakeState.Listening,
       WakeState.Delegated,
-      WakeState.Asking -> "Say “Hey Muse”, or tap anywhere"
+      WakeState.Asking -> "Say “Hey Muse”, or tap Muse"
       is WakeState.Downloading -> "Getting “Hey Muse” ready" + (wake.fraction?.let { " · ${(it * 100).toInt()}%" } ?: "…")
       WakeState.Loading -> "Getting “Hey Muse” ready…"
       WakeState.Yielded -> "Another app has the mic. $TAP"

@@ -57,14 +57,13 @@ val AskState.turnText: TurnText?
 
 /**
  * The screen a room sees: the character (or the orb) in the middle, one line beneath it, and the turn's
- * words under that. The whole screen is the tap-to-talk target; only the gear is not.
+ * words under that. Tapping the character asks; the rest of the screen ignores taps, so waking the
+ * screen or brushing it doesn't start a recording.
  */
 @Composable
 fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettings: () -> Unit) {
   val mood = state.mood
-  Box(
-      Modifier.fillMaxSize()
-          .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onTap)) {
+  Box(Modifier.fillMaxSize()) {
         TopBar(state, onSettings)
         val turn = state.ask.turnText
         val side = if (avatar == null && turn != null) 260.dp else 440.dp
@@ -73,7 +72,13 @@ fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettin
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center) {
               val dim by animateFloatAsState(if (mood == Mood.Offline) 0.45f else 1f, tween(600), label = "offline")
-              Box(Modifier.size(side).alpha(dim), contentAlignment = Alignment.Center) { Character(mood, state.level, avatar, side) }
+              Box(
+                  Modifier.size(side)
+                      .alpha(dim)
+                      .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onTap),
+                  contentAlignment = Alignment.Center) {
+                    Character(mood, state.level, avatar, side)
+                  }
               Spacer(Modifier.height(16.dp))
               AnimatedContent(Line(state.statusLine, turn), transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) }, label = "turn") { line ->
                 TurnWords(line, captionOnly = avatar != null)

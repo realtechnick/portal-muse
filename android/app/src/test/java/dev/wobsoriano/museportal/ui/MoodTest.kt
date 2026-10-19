@@ -47,8 +47,8 @@ class MoodTest {
 
   @Test
   fun theStatusLineSaysHowToAsk() {
-    assertEquals("Say “Hey Muse”, or tap anywhere", online.statusLine)
-    assertEquals("Tap anywhere to ask", online.copy(wakeEnabled = false, wake = WakeState.Off).statusLine)
+    assertEquals("Say “Hey Muse”, or tap Muse", online.statusLine)
+    assertEquals("Tap Muse to ask", online.copy(wakeEnabled = false, wake = WakeState.Off).statusLine)
     assertEquals("Getting “Hey Muse” ready · 40%", online.copy(wake = WakeState.Downloading(0.4f)).statusLine)
     assertEquals("Go ahead, I'm listening", online.copy(ask = AskState.Recording(followUp = true)).statusLine)
   }
