@@ -348,6 +348,12 @@ class MuseController(private val context: Context) {
 
   fun tapMic() = step(AskInput.Tap)
 
+  /** Closes the turn from the card over other apps; the state goes idle first so no follow-up starts. */
+  fun dismiss() {
+    step(AskInput.Dismissed)
+    speaker.stop()
+  }
+
   fun setWakeEnabled(on: Boolean) {
     settings.wakeEnabled = on
     _state.update { it.copy(wakeEnabled = on) }

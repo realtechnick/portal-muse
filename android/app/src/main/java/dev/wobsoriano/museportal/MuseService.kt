@@ -30,7 +30,7 @@ class MuseService : Service() {
             .build()
     startForeground(NOTIFICATION_ID, notification)
     muse.start()
-    overlay = OverlayBar(this, muse.state, avatars.load).also { it.start() }
+    overlay = OverlayBar(this, muse.state, avatars.load, onClose = muse::dismiss).also { it.start() }
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY

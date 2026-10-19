@@ -8,6 +8,19 @@ import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.height
+import dev.wobsoriano.museportal.ui.Mood
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -75,7 +88,12 @@ import kotlinx.coroutines.launch
  * It is drawn as light glass to match the glass launcher. Android 9 gives an overlay no way to blur
  * the app beneath it, so the glass is a white tint, a bright rim and a shadow, without blur.
  */
-class OverlayBar(private val context: Context, private val state: StateFlow<MuseState>, private val avatar: StateFlow<AvatarLoad>) {
+class OverlayBar(
+    private val context: Context,
+    private val state: StateFlow<MuseState>,
+    private val avatar: StateFlow<AvatarLoad>,
+    private val onClose: () -> Unit,
+) {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private val windows = context.getSystemService(WindowManager::class.java)
   private val shown = MutableTransitionState(false)
@@ -190,8 +208,29 @@ class OverlayBar(private val context: Context, private val state: StateFlow<Muse
                 } else if (heard.isNotEmpty()) {
                   Text(s.statusLine, style = MaterialTheme.typography.titleLarge, color = Ink)
                 }
+                if (s.mood == Mood.Hearing || s.mood == Mood.Reply) VoiceBars(s.level)
               }
+              IconButton(
+                  onClick = onClose,
+                  modifier = Modifier.size(56.dp).clip(CircleShape).background(Ink.copy(alpha = 0.08f))) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close", tint = Ink, modifier = Modifier.size(28.dp))
+                  }
             }
+      }
+    }
+  }
+
+  /** Four bars that move while Muse listens, taller as the voice gets louder. */
+  @Composable
+  private fun VoiceBars(level: Float) {
+    val wave = rememberInfiniteTransition(label = "bars")
+    Row(Modifier.height(BAR_MAX_DP.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+      for (i in 0 until 4) {
+        val phase by
+            wave.animateFloat(
+                0.3f, 1f, infiniteRepeatable(tween(520 + i * 90, easing = LinearEasing), RepeatMode.Reverse), label = "bar$i")
+        val fraction = (0.25f + 0.75f * level.coerceIn(0f, 1f)) * phase
+        Box(Modifier.width(7.dp).height((BAR_MAX_DP * fraction.coerceAtLeast(0.2f)).dp).clip(CircleShape).background(Listening))
       }
     }
   }
@@ -225,5 +264,7 @@ class OverlayBar(private val context: Context, private val state: StateFlow<Muse
     val Ink = Color(0xFF12141C)
     val InkDim = Color(0xFF5D6378)
     val InkBad = Color(0xFFB3261E)
+    val Listening = Color(0xFF4B6BFF)
+    const val BAR_MAX_DP = 36
   }
 }

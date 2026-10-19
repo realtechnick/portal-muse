@@ -45,6 +45,9 @@ sealed interface AskInput {
 
   /** The app's screen went to the background. */
   data object LeftApp : AskInput
+
+  /** The user closed the turn: whatever was being recorded or answered is dropped. */
+  data object Dismissed : AskInput
 }
 
 sealed interface AskEffect {
@@ -94,6 +97,7 @@ fun AskState.next(input: AskInput): AskStep =
           } else {
             AskStep(this)
           }
+      AskInput.Dismissed -> AskStep(AskState.Idle, if (this is AskState.Recording) AskEffect.StopRecording else null)
       AskInput.Expired ->
           AskStep(if (this is AskState.Failed || (this is AskState.Answered && complete)) AskState.Idle else this)
     }

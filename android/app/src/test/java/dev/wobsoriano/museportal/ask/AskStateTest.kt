@@ -162,4 +162,17 @@ class AskStateTest {
     val heard = AskState.Recording(0.2f)
     assertEquals(AskStep(heard), heard.next(AskInput.LeftApp))
   }
+
+  @Test
+  fun closingTheCardDropsARecording() {
+    assertEquals(AskStep(AskState.Idle, AskEffect.StopRecording), AskState.Recording(0.5f).next(AskInput.Dismissed))
+  }
+
+  @Test
+  fun closingTheCardDropsAnAnswerSoNoFollowUpStarts() {
+    val asked = AskState.Answered("a1", "is it raining", "Want the forecast?", complete = true)
+    val closed = asked.next(AskInput.Dismissed)
+    assertEquals(AskStep(AskState.Idle), closed)
+    assertEquals(AskStep(AskState.Idle), closed.state.next(AskInput.Spoken()))
+  }
 }
