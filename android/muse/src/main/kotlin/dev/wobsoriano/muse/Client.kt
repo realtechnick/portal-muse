@@ -6,10 +6,19 @@
 
 package dev.wobsoriano.muse
 
+import dev.wobsoriano.muse.voice.CallAudio
+import dev.wobsoriano.muse.voice.CallCommand
+import dev.wobsoriano.muse.voice.CallEnd
+import dev.wobsoriano.muse.voice.CallOptions
+import dev.wobsoriano.muse.voice.CallRunner
+import dev.wobsoriano.muse.voice.CallView
+import dev.wobsoriano.muse.voice.Decline
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
@@ -93,7 +102,10 @@ class Client(private val cfg: Config) {
   private val lock = Any()
   private var state = ConnState(Phase.Offline)
   private var session: Session? = null
+  /** What a call borrows from the session: set and cleared with it. */
+  private var voice: VoiceTarget? = null
   private var running = false
+  private var calling = false
 
   // The rest belongs to the coroutine in run.
 
@@ -164,6 +176,63 @@ class Client(private val cfg: Config) {
     val s = synchronized(lock) { session } ?: throw OfflineException()
     return s.ask(input, on)
   }
+
+  /**
+   * Calls Muse over [audio] and talks until one side hangs up, on a voice connection of its own. It
+   * borrows the VM, bearer, Noise host and node id of the registered session, so it needs the client
+   * online, never touches the tokens, and leaves that session registered. It returns once the call is
+   * over and cleaned up; [CallEnd.Declined] means it never went live and the caller may fall back. Once
+   * the call's start may have reached Muse the call is ended there, also when the coroutine is
+   * canceled, which then rethrows. [control] hangs up or interrupts, and [on] hears what the call shows,
+   * on the call's coroutine, and must not block. One call at a time.
+   */
+  suspend fun call(
+      audio: CallAudio,
+      options: CallOptions = CallOptions(),
+      control: ReceiveChannel<CallCommand> = Channel(),
+      on: (CallView) -> Unit = {},
+  ): CallEnd {
+    val (s, target) = synchronized(lock) { session to voice }
+    if (s == null || target == null || s.registeredAt == null) return CallEnd.Declined(Decline.Offline)
+    synchronized(lock) {
+      if (calling) return CallEnd.Declined(Decline.Dropped("busy"))
+      calling = true
+    }
+    try {
+      val url =
+          try {
+            noiseUrl(target.host, target.vmId, allowPlaintext, options.appId)
+          } catch (e: MuseException) {
+            return CallEnd.Declined(Decline.Dropped("bad app id"))
+          }
+      val link =
+          Session(
+              SessionParams(
+                  url = url,
+                  bearer = target.bearer,
+                  userAgent = userAgent,
+                  http = sessionHttp(),
+                  nodeId = target.nodeId,
+                  register = null,
+                  commands = emptyMap(),
+                  log = log,
+                  t = t,
+                  registered = {},
+                  knockEvery = Duration.ZERO,
+                  knocks = 0))
+      return CallRunner(link, audio, options, target.nodeId, control, on, log).run()
+    } finally {
+      synchronized(lock) { calling = false }
+    }
+  }
+
+  // Noise ciphertext does not compress, so nothing is deflated even if the VM agrees to it.
+  private fun sessionHttp() =
+      http
+          .newBuilder()
+          .pingInterval(t.ping.inWholeMilliseconds, java.util.concurrent.TimeUnit.MILLISECONDS)
+          .minWebSocketMessageToCompress(Long.MAX_VALUE)
+          .build()
 
   /**
    * Keeps the device connected until the device turns out to be unpaired, and then returns. Each
@@ -349,13 +418,7 @@ class Client(private val cfg: Config) {
                 url = url,
                 bearer = v.authToken,
                 userAgent = userAgent,
-                // Noise ciphertext does not compress, so nothing is deflated even if the VM agrees to it.
-                http =
-                    http
-                        .newBuilder()
-                        .pingInterval(t.ping.inWholeMilliseconds, java.util.concurrent.TimeUnit.MILLISECONDS)
-                        .minWebSocketMessageToCompress(Long.MAX_VALUE)
-                        .build(),
+                http = sessionHttp(),
                 nodeId = st.identity.nodeId,
                 register = register,
                 commands = commands,
@@ -366,13 +429,19 @@ class Client(private val cfg: Config) {
                 knocks = knocks(v),
             ))
     log.info("muse: connecting", "vm" to vmId)
-    synchronized(lock) { session = s }
+    synchronized(lock) {
+      session = s
+      voice = VoiceTarget(host, vmId, v.authToken, st.identity.nodeId)
+    }
     val ended: Ended
     try {
       ended = s.run()
     } finally {
       if (s.knocked > 0) knockedAt = System.nanoTime()
-      synchronized(lock) { session = null }
+      synchronized(lock) {
+        session = null
+        voice = null
+      }
     }
     val lasted = s.registeredAt?.let { (System.nanoTime() - it).nanoseconds } ?: Duration.ZERO
     log.info("muse: session ended", "registered_for" to lasted.inWholeSeconds.seconds, "err" to ended.error?.message)
@@ -441,3 +510,6 @@ class Client(private val cfg: Config) {
     return next
   }
 }
+
+/** The VM a registered session reached, which a call connects to again with the same bearer. */
+private class VoiceTarget(val host: String, val vmId: String, val bearer: String, val nodeId: String)
