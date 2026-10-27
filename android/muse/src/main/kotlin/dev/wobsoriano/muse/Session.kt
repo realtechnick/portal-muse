@@ -219,6 +219,9 @@ internal class ControlDecoder {
 /** Takes the frames of one stream. It is called with the session's lock held. */
 internal interface Sink {
   fun onFrame(f: Frame)
+
+  /** The connection is gone and no frame follows. */
+  fun onClosed(why: String) {}
 }
 
 /** Collects the answer to one request stream. */
@@ -256,7 +259,11 @@ internal class SessionParams(
     val userAgent: String,
     val http: OkHttpClient,
     val nodeId: String,
-    val register: JsonObject,
+    /**
+     * The link.register params. Null for a voice connection, which opens no /link-control and never
+     * registers, so the device's own session stays the registered one.
+     */
+    val register: JsonObject?,
     val commands: Map<String, Command>,
     val log: Logger,
     val t: Timing,
@@ -300,6 +307,8 @@ internal class Session(private val p: SessionParams) {
   // lock guards these.
   private val lock = Any()
   private val streams = HashMap<Long, Sink>()
+  /** Set once the connection is gone, after which no stream can be opened. */
+  private var gone = false
   private var sub: Subscription? = null
   private var turn: Turn? = null
   /** System.nanoTime when Muse accepted the registration, or null before. */
@@ -309,6 +318,12 @@ internal class Session(private val p: SessionParams) {
 
   /** Completes when the session is over, which frees everything waiting on it. */
   private val ended = CompletableDeferred<Unit>()
+  /** Completes once the Noise session is established. A session that ends first leaves it incomplete, and run says why. */
+  val up = CompletableDeferred<Unit>()
+
+  /** Bytes the WebSocket has queued and not yet written. */
+  val backlog: Long
+    get() = ws?.queueSize() ?: 0L
   /** Ends with the session and takes the running commands with it. */
   private val invoking = SupervisorJob()
   private val invokeScope = CoroutineScope(invoking + Dispatchers.Default)
@@ -405,6 +420,11 @@ internal class Session(private val p: SessionParams) {
         } finally {
           ended.complete(Unit)
           dialed.ws.cancel()
+          synchronized(lock) {
+            gone = true
+            for (s in streams.values) s.onClosed("connection closed")
+            streams.clear()
+          }
           withContext(NonCancellable) { invoking.cancelAndJoin() }
         }
       }
@@ -420,21 +440,25 @@ internal class Session(private val p: SessionParams) {
       return Ended(Outcome.Closed, MuseException("muse: Noise handshake: ${e.message}", e))
     }
     p.log.info("muse: Noise session established")
+    up.complete(Unit)
 
-    try {
-      control = open(Frame(kind = FrameKind.Request, verb = "POST", path = CONTROL_PATH), null)
-      registerId = uuid4()
-      sendControl(
-          buildJsonObject {
-            put("type", "req")
-            put("id", registerId)
-            put("method", "link.register")
-            put("params", p.register)
-          })
-    } catch (e: MuseException) {
-      return Ended(Outcome.Closed, e)
+    // Without a control stream, control stays 0 and every frame goes to the stream it names.
+    if (p.register != null) {
+      try {
+        control = open(Frame(kind = FrameKind.Request, verb = "POST", path = CONTROL_PATH), null)
+        registerId = uuid4()
+        sendControl(
+            buildJsonObject {
+              put("type", "req")
+              put("id", registerId)
+              put("method", "link.register")
+              put("params", p.register)
+            })
+      } catch (e: MuseException) {
+        return Ended(Outcome.Closed, e)
+      }
+      p.log.info("muse: sent link.register", "node" to p.nodeId)
     }
-    p.log.info("muse: sent link.register", "node" to p.nodeId)
 
     val controlStream = ControlDecoder()
     while (true) {
@@ -516,7 +540,12 @@ internal class Session(private val p: SessionParams) {
       synchronized(sendLock) {
         nextStream++
         val id = nextStream
-        if (to != null) synchronized(lock) { streams[id] = to }
+        if (to != null) {
+          synchronized(lock) {
+            if (gone) throw MuseException("muse: send: not connected")
+            streams[id] = to
+          }
+        }
         try {
           writeLocked(f.withStream(id))
         } catch (e: MuseException) {
@@ -526,7 +555,7 @@ internal class Session(private val p: SessionParams) {
         id
       }
 
-  private fun write(f: Frame) = synchronized(sendLock) { writeLocked(f) }
+  internal fun write(f: Frame) = synchronized(sendLock) { writeLocked(f) }
 
   private fun writeLocked(f: Frame) {
     val ws = ws ?: throw MuseException("muse: send: not connected")
@@ -546,8 +575,47 @@ internal class Session(private val p: SessionParams) {
     }
   }
 
-  private fun forget(stream: Long) {
+  internal fun forget(stream: Long) {
     synchronized(lock) { streams.remove(stream) }
+  }
+
+  /**
+   * Opens a stream whose answer is read as it arrives. Without [endBody] its body stays open for
+   * [DuplexStream.send]. Throws MuseException when the connection is gone.
+   */
+  fun openStream(verb: String, path: String, headers: List<Header>, body: ByteArray = EMPTY, endBody: Boolean = false): DuplexStream {
+    val sink = DuplexSink()
+    val id = open(Frame(kind = FrameKind.Request, verb = verb, path = path, headers = headers, data = body, endBody = endBody), sink)
+    return DuplexStream(this, id, sink, endBody)
+  }
+
+  /** One request answered whole, at most MAX_RESPONSE_BYTES, within [timeout]. One that fails or runs out of time is reset. */
+  suspend fun request(verb: String, path: String, headers: List<Header>, body: ByteArray = EMPTY, timeout: Duration = p.t.request): Buffered {
+    val stream = openStream(verb, path, headers, body, endBody = true)
+    var answered = false
+    try {
+      val got = withTimeoutOrNull(timeout) { whole(stream) } ?: throw MuseException("muse: no answer in time")
+      answered = true
+      return got
+    } finally {
+      stream.close(reset = !answered)
+    }
+  }
+
+  private suspend fun whole(stream: DuplexStream): Buffered {
+    var status = 0
+    val got = ByteArrayOutputStream()
+    while (true) {
+      when (val i = stream.inbound.receive()) {
+        is Inbound.Head -> status = i.status
+        is Inbound.Chunk -> {
+          got.write(i.data)
+          i.release()
+          if (got.size() > MAX_RESPONSE_BYTES) throw MuseException("muse: response too large")
+        }
+        Inbound.End -> return Buffered(status, got.toByteArray())
+      }
+    }
   }
 
   private fun sendControl(message: JsonElement) = write(Frame(stream = control, kind = FrameKind.Body, data = encodeControl(message)))
