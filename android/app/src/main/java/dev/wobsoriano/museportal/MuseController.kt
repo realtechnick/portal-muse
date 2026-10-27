@@ -19,6 +19,7 @@ import dev.wobsoriano.muse.core.Status
 import dev.wobsoriano.museportal.ask.AskEffect
 import dev.wobsoriano.museportal.ask.AskInput
 import dev.wobsoriano.museportal.ask.AskState
+import dev.wobsoriano.museportal.ask.holdsMic
 import dev.wobsoriano.museportal.ask.inFlight
 import dev.wobsoriano.museportal.ask.next
 import dev.wobsoriano.museportal.audio.Capture
@@ -32,6 +33,7 @@ import dev.wobsoriano.museportal.heymuse.WakeHost
 import dev.wobsoriano.museportal.heymuse.WakeInput
 import dev.wobsoriano.museportal.heymuse.WakeListener
 import dev.wobsoriano.museportal.heymuse.WakeState
+import dev.wobsoriano.museportal.heymuse.WakeTurn
 import dev.wobsoriano.museportal.audio.VoiceOption
 import dev.wobsoriano.museportal.setup.Screen
 import dev.wobsoriano.museportal.setup.SdkToken
@@ -364,17 +366,17 @@ class MuseController(private val context: Context) {
     get() = settings.wakeEnabled
 
   /**
-   * "Hey Muse" was heard: chimes and starts an ask, unless a question is already being recorded.
-   * With [listenerRecords] our listener records it on the mic that heard the wake; otherwise (a
+   * "Hey Muse" was heard: chimes and starts an ask, unless the mic is already taken. With
+   * [listenerRecords] our listener records it on the mic that heard the wake; otherwise (a
    * portal-wake hand-off) the question gets a mic of its own.
    */
-  fun wake(listenerRecords: Boolean): Boolean {
-    if (_state.value.ask is AskState.Recording) return false
+  fun wake(listenerRecords: Boolean): WakeTurn {
+    if (_state.value.ask.holdsMic) return WakeTurn.Refused
     speaker.stop()
     stopRecording = false
     chime.play()
     step(AskInput.Wake(listenerRecords), skipMs = WakeListener.CHIME_SKIP_MS)
-    return true
+    return WakeTurn.Record
   }
 
   fun ask(text: String) {
