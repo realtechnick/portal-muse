@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import dev.wobsoriano.museportal.MuseState
 import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.avatar.AvatarSet
+import dev.wobsoriano.muse.voice.CallPhase
 
 /** What the turn has to say: the question as heard and the answer so far, or why it failed. */
 data class TurnText(val heard: String, val answer: String, val failed: Boolean)
@@ -58,10 +59,10 @@ val AskState.turnText: TurnText?
 /**
  * The screen a room sees: the character (or the orb) in the middle, one line beneath it, and the turn's
  * words under that. Tapping the character asks; the rest of the screen ignores taps, so waking the
- * screen or brushing it doesn't start a recording.
+ * screen or brushing it doesn't start a recording. A call has its own button to hang up.
  */
 @Composable
-fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettings: () -> Unit) {
+fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onEndCall: () -> Unit, onSettings: () -> Unit) {
   val mood = state.mood
   Box(Modifier.fillMaxSize()) {
         TopBar(state, onSettings)
@@ -82,6 +83,11 @@ fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettin
               Spacer(Modifier.height(16.dp))
               AnimatedContent(Line(state.statusLine, turn), transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) }, label = "turn") { line ->
                 TurnWords(line, captionOnly = avatar != null)
+              }
+              val call = state.ask as? AskState.Calling
+              if (call != null && call.phase != CallPhase.Ending) {
+                Spacer(Modifier.height(24.dp))
+                Pill("End call", onEndCall, primary = false, danger = true)
               }
             }
       }

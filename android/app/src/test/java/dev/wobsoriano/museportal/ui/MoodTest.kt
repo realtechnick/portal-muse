@@ -6,6 +6,7 @@ import dev.wobsoriano.museportal.CoreState
 import dev.wobsoriano.museportal.MuseState
 import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.heymuse.WakeState
+import dev.wobsoriano.muse.voice.CallPhase
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -58,5 +59,21 @@ class MoodTest {
     assertEquals("Online", online.connectionLabel)
     assertEquals("Connecting…", online.copy(connection = Status(Phase.Connecting)).connectionLabel)
     assertEquals("Restarting…", online.copy(core = CoreState.Restarting("boom", 1000)).connectionLabel)
+  }
+
+  @Test
+  fun aCallShowsWhoIsTalking() {
+    val phases = CallPhase.entries.map { online.copy(ask = AskState.Calling("c1", it, 0.5f)) }
+    assertEquals(
+        listOf(Mood.Thinking, Mood.Hearing, Mood.Thinking, Mood.Speaking, Mood.Hearing, Mood.Thinking),
+        phases.map { it.mood })
+    assertEquals(
+        listOf("Connecting…", "Listening…", "Thinking…", "", "Go ahead, I'm listening", "Ending call…"),
+        phases.map { it.statusLine })
+  }
+
+  @Test
+  fun theOrbFollowsTheVoiceInACall() {
+    assertEquals(0.5f, online.copy(ask = AskState.Calling("c1", CallPhase.Listening, 0.5f)).level, 0f)
   }
 }

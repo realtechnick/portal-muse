@@ -126,16 +126,16 @@ private fun read(rec: AudioRecord, ms: Int): ShortArray {
   return out
 }
 
-private fun rms(pcm: ShortArray): Double = sqrt(pcm.sumOf { it.toDouble() * it } / pcm.size)
+internal fun rms(pcm: ShortArray): Double = sqrt(pcm.sumOf { it.toDouble() * it } / pcm.size)
 
-private fun dbfs(amplitude: Double) = 20 * log10(maxOf(amplitude, 1e-9) / 32768.0)
+internal fun dbfs(amplitude: Double) = 20 * log10(maxOf(amplitude, 1e-9) / 32768.0)
 
 /** Band-limited noise that swells and fades four times a second, roughly the rhythm of syllables. */
-private fun speechNoise(): ShortArray {
+internal fun speechNoise(ms: Int = PLAY_MS): ShortArray {
   val random = Random(7)
   var fast = 0.0
   var slow = 0.0
-  return ShortArray(RATE * PLAY_MS / 1000) { i ->
+  return ShortArray(RATE * ms / 1000) { i ->
     val white = random.nextDouble(-1.0, 1.0)
     fast += 0.25 * (white - fast)
     slow += 0.02 * (white - slow)
