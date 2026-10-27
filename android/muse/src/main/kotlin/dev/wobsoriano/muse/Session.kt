@@ -56,7 +56,7 @@ internal const val NOISE_PATH = "/v1/noise"
 internal const val CONTROL_PATH = "/link-control"
 internal const val CHAT_PATH = "/chat/stream"
 internal const val SUBSCRIBE_PATH = "/chat/subscribe"
-private const val APP_ID = "musegadget"
+internal const val APP_ID = "musegadget"
 
 private const val MAX_CONCURRENT_INVOKES = 4
 private const val MAX_INBOUND_MESSAGE = 4 shl 20

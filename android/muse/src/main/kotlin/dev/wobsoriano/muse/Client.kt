@@ -10,9 +10,13 @@ import dev.wobsoriano.muse.voice.CallAudio
 import dev.wobsoriano.muse.voice.CallCommand
 import dev.wobsoriano.muse.voice.CallEnd
 import dev.wobsoriano.muse.voice.CallOptions
+import dev.wobsoriano.muse.voice.CallPhase
 import dev.wobsoriano.muse.voice.CallRunner
 import dev.wobsoriano.muse.voice.CallView
 import dev.wobsoriano.muse.voice.Decline
+import dev.wobsoriano.muse.voice.ProbeReport
+import dev.wobsoriano.muse.voice.SilentAudio
+import dev.wobsoriano.muse.voice.reach
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
@@ -224,6 +228,27 @@ class Client(private val cfg: Config) {
     } finally {
       synchronized(lock) { calling = false }
     }
+  }
+
+  /**
+   * Asks Muse a few things on the registered session, and with [realtime] admits a call and hangs it up
+   * again: GET /chat/history, POST /fs/read of a file that is not there, and POST /voice/realtime. Only
+   * statuses and short codes come back, never a body. An admitted call may replace one already on the VM.
+   */
+  suspend fun probe(realtime: Boolean = false): ProbeReport {
+    val s = synchronized(lock) { session }?.takeIf { it.registeredAt != null }
+    fun headers(vararg extra: Header) = extra.toList() + listOf(Header("x-request-id", uuid4()), Header("x-app-id", APP_ID))
+    val history = reach(s, "GET", "/chat/history?limit=1", headers())
+    val missing = buildJsonObject { put("path", "gadget-data/probe-${uuid4()}.txt") }.toString().toByteArray()
+    val fsRead = reach(s, "POST", "/fs/read", headers(Header("Content-Type", "application/json")), missing)
+    val call =
+        if (!realtime) {
+          null
+        } else {
+          val control = Channel<CallCommand>(Channel.UNLIMITED)
+          call(SilentAudio(), CallOptions(admit = 10.seconds), control) { if (it.phase != CallPhase.Connecting) control.trySend(CallCommand.HangUp) }
+        }
+    return ProbeReport(history, fsRead, call)
   }
 
   // Noise ciphertext does not compress, so nothing is deflated even if the VM agrees to it.
