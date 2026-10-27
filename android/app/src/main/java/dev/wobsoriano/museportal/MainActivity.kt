@@ -32,6 +32,7 @@ import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.PairState
 import dev.wobsoriano.muse.core.PairStatus
 import dev.wobsoriano.muse.core.Status
+import dev.wobsoriano.muse.voice.CallPhase
 import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.avatar.AvatarLoad
 import dev.wobsoriano.museportal.setup.Screen
@@ -109,7 +110,8 @@ class MainActivity : ComponentActivity() {
             when (val s = shown.screen) {
               Screen.Loading -> Box(Modifier.fillMaxSize())
               is Screen.Setup -> SetupScreen(s.step, state, canOverlay, set, if (readOnly) PreviewSetup else setupActions)
-              Screen.Home -> HomeScreen(state, set, onTap = { if (!readOnly) muse.tapMic() }, onSettings = { settings = true })
+              Screen.Home ->
+                  HomeScreen(state, set, onTap = { if (!readOnly) muse.tapMic() }, onEndCall = { if (!readOnly) muse.dismiss() }, onSettings = { settings = true })
             }
       }
     }
@@ -173,7 +175,7 @@ class MainActivity : ComponentActivity() {
   // Lets adb set the token without the Portal's on-screen keyboard, ask without the mic and flip the
   // wake word: `am start -n .../.MainActivity --es sdkToken mgst_... --es ask "what time is it" --ez heyMuse true`.
   // A debug build also previews screens without touching saved state: `--es previewSetup pair`,
-  // `--es previewHome thinking`, `--ez noAvatar true`, `--es page settings`.
+  // `--es previewHome thinking` (or `call`), `--ez noAvatar true`, `--es page settings`.
   private fun applyExtras(intent: Intent?) {
     intent?.getStringExtra("name")?.let(muse::rename)
     intent?.getStringExtra("sdkToken")?.let(muse::saveToken)
@@ -206,6 +208,7 @@ private class Preview(val screen: Screen?, val state: ((MuseState) -> MuseState)
             "speaking" -> { s -> s.copy(ask = AskState.Answered("p", heard, answer, complete = true), speaking = true) }
             "answered" -> { s -> s.copy(ask = AskState.Answered("p", heard, answer, complete = true), speaking = false) }
             "reply" -> { s -> s.copy(ask = AskState.Recording(0.3f, followUp = true)) }
+            "call" -> { s -> s.copy(ask = AskState.Calling("p", CallPhase.Listening, 0.5f)) }
             "offline" -> { s -> s.copy(ask = AskState.Idle, connection = Status(Phase.Offline, "no internet")) }
             else -> return null
           }
