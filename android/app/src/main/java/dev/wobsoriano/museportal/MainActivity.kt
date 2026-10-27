@@ -33,6 +33,7 @@ import dev.wobsoriano.muse.core.PairState
 import dev.wobsoriano.muse.core.PairStatus
 import dev.wobsoriano.muse.core.Status
 import dev.wobsoriano.muse.voice.CallPhase
+import dev.wobsoriano.muse.voice.Duplex
 import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.avatar.AvatarLoad
 import dev.wobsoriano.museportal.setup.Screen
@@ -154,6 +155,8 @@ class MainActivity : ComponentActivity() {
 
         override fun setKeepListening(on: Boolean) = muse.setKeepListening(on)
 
+        override fun setConversationMode(on: Boolean) = muse.setConversationMode(on)
+
         override fun requestOverlay() = this@MainActivity.requestOverlay()
 
         override fun setVoice(name: String?, rate: Float) = muse.setVoice(name, rate)
@@ -175,7 +178,8 @@ class MainActivity : ComponentActivity() {
   // Lets adb set the token without the Portal's on-screen keyboard, ask without the mic and flip the
   // wake word: `am start -n .../.MainActivity --es sdkToken mgst_... --es ask "what time is it" --ez heyMuse true`.
   // A debug build also previews screens without touching saved state: `--es previewSetup pair`,
-  // `--es previewHome thinking` (or `call`), `--ez noAvatar true`, `--es page settings`.
+  // `--es previewHome thinking` (or `call`), `--ez noAvatar true`, `--es page settings`, and sets a
+  // call's duplex with `--es duplex full|half`.
   private fun applyExtras(intent: Intent?) {
     intent?.getStringExtra("name")?.let(muse::rename)
     intent?.getStringExtra("sdkToken")?.let(muse::saveToken)
@@ -184,6 +188,7 @@ class MainActivity : ComponentActivity() {
     intent?.getStringExtra("page")?.let { settings = it == "settings" }
     if (!BuildConfig.DEBUG || intent == null) return
     if (intent.getBooleanExtra("noAvatar", false)) avatars.hide() else if (intent.hasExtra("noAvatar")) avatars.reload()
+    intent.getStringExtra("duplex")?.let { d -> Duplex.entries.find { it.name.equals(d, ignoreCase = true) }?.let(muse::setDuplex) }
     preview.value = Preview.of(intent.getStringExtra("previewSetup"), intent.getStringExtra("previewHome"))
   }
 }

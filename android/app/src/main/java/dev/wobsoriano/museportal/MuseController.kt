@@ -21,6 +21,7 @@ import dev.wobsoriano.muse.voice.CallCommand
 import dev.wobsoriano.muse.voice.CallEnd
 import dev.wobsoriano.muse.voice.CallOptions
 import dev.wobsoriano.muse.voice.Decline
+import dev.wobsoriano.muse.voice.Duplex
 import dev.wobsoriano.museportal.ask.AskEffect
 import dev.wobsoriano.museportal.ask.AskInput
 import dev.wobsoriano.museportal.ask.AskState
@@ -322,6 +323,17 @@ class MuseController(private val context: Context) {
   fun setKeepListening(on: Boolean) {
     settings.keepListening = on
     _state.update { it.copy(keepListening = on) }
+  }
+
+  /** Toggling it forgets any refusal, so the next wake tries a call. */
+  fun setConversationMode(on: Boolean) {
+    settings.conversationMode = on
+    callGate.reset()
+    _state.update { it.copy(conversationMode = on) }
+  }
+
+  fun setDuplex(duplex: Duplex) {
+    settings.duplex = duplex
   }
 
   fun setVoice(name: String?, rate: Float) {
