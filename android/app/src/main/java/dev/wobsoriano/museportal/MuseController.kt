@@ -408,8 +408,16 @@ class MuseController(private val context: Context) {
         chime.play()
         record(WakeListener.CHIME_SKIP_MS, waitForSpeechMs = REPLY_WAIT_MS)
       }
+      AskEffect.FallBack -> {
+        chime.play()
+        record(WakeListener.CHIME_SKIP_MS)
+      }
       AskEffect.StopRecording -> stopRecording = true
       is AskEffect.Speak -> speaker.speak(e.text)
+      is AskEffect.StartCall,
+      AskEffect.HangUp,
+      AskEffect.Interrupt,
+      AskEffect.CallReady,
       null -> Unit
     }
     afterStep()
