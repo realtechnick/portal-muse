@@ -374,6 +374,12 @@ class MuseController(private val context: Context) {
         .joinToString("\n")
   }
 
+  /** Debug: asks Muse a few questions and logs each one's statuses and codes, never a body or a token. */
+  fun probe(realtime: Boolean) {
+    val c = core
+    if (c == null) Log.i(PROBE_TAG, "the Muse core is not running") else c.probe(realtime) { line -> Log.i(PROBE_TAG, line) }
+  }
+
   /** Network facts may have changed after a permission grant. */
   fun refreshConfig() = sendConfig()
 
@@ -547,6 +553,7 @@ class MuseController(private val context: Context) {
 
   private companion object {
     const val TAG = "MuseApp"
+    const val PROBE_TAG = "MuseProbe"
     const val HEALTHY_MS = 60_000L
     const val MAX_BACKOFF_MS = 30_000L
     const val MIC_HANDOFF_MS = 1_000L
