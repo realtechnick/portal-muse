@@ -64,7 +64,9 @@ data class CallOptions(
   init {
     require(micThreshold in 0..32767) { "mic threshold must be between 0 and 32767" }
     require(idle.isPositive() && overall.isPositive() && admit.isPositive() && cleanup.isPositive()) { "timeouts must be positive" }
-    require(appId == "hatch-web" || appId.toLongOrNull()?.let { it > 0 } == true) { "app id must be hatch-web or a positive integer" }
+    require(appId == "hatch-web" || (appId.length in 1..19 && appId.all { it in '0'..'9' } && (appId.toLongOrNull() ?: 0) > 0)) {
+      "app id must be hatch-web or a positive 64-bit integer"
+    }
   }
 }
 
