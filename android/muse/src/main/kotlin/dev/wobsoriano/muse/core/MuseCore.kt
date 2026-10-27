@@ -34,6 +34,9 @@ import dev.wobsoriano.muse.voice.CallCommand
 import dev.wobsoriano.muse.voice.CallEnd
 import dev.wobsoriano.muse.voice.CallOptions
 import dev.wobsoriano.muse.voice.CallView
+import dev.wobsoriano.muse.voice.Decline
+import dev.wobsoriano.muse.voice.OverReason
+import dev.wobsoriano.muse.voice.ProbeReport
 import java.io.FileNotFoundException
 import java.nio.file.NoSuchFileException
 import java.util.concurrent.atomic.AtomicInteger
@@ -210,7 +213,21 @@ private sealed interface Ev {
 
   class PairDone(val run: PairRun, val error: Throwable?) : Ev
 
-  data object AskDone : Ev
+  class Call(val id: String, val audio: CallAudio, val options: CallOptions) : Ev
+
+  class Command(val command: CallCommand) : Ev
+
+  class Probe(val realtime: Boolean, val report: (String) -> Unit) : Ev
+
+  /** The ask or the call that ran is over. */
+  data object Done : Ev
+}
+
+/** What runs: one ask or one call at a time. Muse does not say which question an answer belongs to, and the Portal has one microphone. */
+private enum class Busy {
+  Idle,
+  Asking,
+  Calling,
 }
 
 private class StoppingException(message: String) : MuseException(message)
@@ -241,11 +258,12 @@ class MuseCore(
   private var client: ClientRun? = null
   /** Null while pairing is closed. */
   private var pair: PairRun? = null
-  /** Set while an ask is in flight: Muse does not say which question an answer belongs to, so there is only ever one. */
-  private var asking = false
+  private var busy = Busy.Idle
+  /** The running call's commands, while busy calling. */
+  private var callControl: Channel<CallCommand>? = null
   private var status: Status? = null
   private var closing = false
-  /** Ends at shutdown, and with it the client, the pairing and any ask. */
+  /** Ends at shutdown, and with it the client, the pairing and any ask or call, which is still ended on the server first. */
   private lateinit var root: CoroutineScope
 
   fun config(cfg: CoreConfig) = post(Ev.Config(cfg))
@@ -262,13 +280,13 @@ class MuseCore(
    * A realtime voice call over [audio]. It is refused, as [CallEnd.Declined], while an ask or another
    * call runs or when offline; a declined call never opened [audio].
    */
-  fun call(id: String, audio: CallAudio, options: CallOptions = CallOptions()): Unit = TODO("realtime voice")
+  fun call(id: String, audio: CallAudio, options: CallOptions = CallOptions()) = post(Ev.Call(id, audio, options))
 
   /** Hangs up or interrupts the running call; ignored when none runs. */
-  fun callCommand(command: CallCommand): Unit = TODO("realtime voice")
+  fun callCommand(command: CallCommand) = post(Ev.Command(command))
 
   /** Asks the server a few questions and reports each as one line of statuses and codes; [realtime] also admits and ends a call. */
-  fun probe(realtime: Boolean = false, report: (String) -> Unit): Unit = TODO("realtime voice")
+  fun probe(realtime: Boolean = false, report: (String) -> Unit) = post(Ev.Probe(realtime, report))
 
   /** Forgets the pairing. */
   fun unpair() = post(Ev.Unpair)
@@ -309,7 +327,7 @@ class MuseCore(
       root = CoroutineScope(coroutineContext + Job(coroutineContext[Job]))
       load()
       try {
-        while (!closing || client != null || pair != null || asking) {
+        while (!closing || client != null || pair != null || busy != Busy.Idle) {
           val ev =
               try {
                 events.receive()
@@ -386,7 +404,10 @@ class MuseCore(
         }
         reconcile()
       }
-      Ev.AskDone -> asking = false
+      Ev.Done -> {
+        busy = Busy.Idle
+        callControl = null
+      }
       else -> if (!closing) handleInput(ev)
     }
     publishStatus(false)
@@ -434,6 +455,9 @@ class MuseCore(
             p.ctrl.onDisconnect()
           }
       is Ev.Ask -> ask(ev)
+      is Ev.Call -> call(ev)
+      is Ev.Command -> callControl?.trySend(ev.command)
+      is Ev.Probe -> probe(ev)
       Ev.Unpair -> forget()
       else -> Unit
     }
@@ -613,11 +637,11 @@ class MuseCore(
           a.wav != null && a.text == null -> AskInput.VoiceNote(a.wav)
           else -> return fail("an ask carries exactly one of text and wav")
         }
-    if (asking) return fail(BusyException().message.orEmpty())
+    if (busy != Busy.Idle) return fail(BusyException().message.orEmpty())
     val c = client
     if (c == null || c.stopping) return fail(OfflineException().message.orEmpty())
     val id = a.id
-    asking = true
+    busy = Busy.Asking
     root.launch {
       try {
         val reply =
@@ -636,7 +660,53 @@ class MuseCore(
       } catch (e: Exception) {
         out { listener.reply(AskUpdate(id, ReplyKind.Error, error = e.message.orEmpty())) }
       } finally {
-        post(Ev.AskDone)
+        post(Ev.Done)
+      }
+    }
+  }
+
+  private fun call(c: Ev.Call) {
+    fun ended(end: CallEnd) = out { listener.call(CallUpdate.Ended(c.id, end)) }
+    if (busy != Busy.Idle) return ended(CallEnd.Declined(Decline.Dropped("busy")))
+    val r = client
+    if (r == null || r.stopping) return ended(CallEnd.Declined(Decline.Offline))
+    val control = Channel<CallCommand>(Channel.UNLIMITED)
+    busy = Busy.Calling
+    callControl = control
+    root.launch {
+      var end: CallEnd = CallEnd.Over(OverReason.Failed("canceled"))
+      try {
+        end = r.client.call(c.audio, c.options, control) { v -> out { listener.call(CallUpdate.Phase(c.id, v)) } }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        log.error("the call failed", "err" to e.javaClass.simpleName)
+        end = CallEnd.Over(OverReason.Failed("the call failed"))
+      } finally {
+        // Done goes first, so a voice note the app sends on hearing the end is never refused as busy.
+        post(Ev.Done)
+        ended(end)
+      }
+    }
+  }
+
+  private fun probe(p: Ev.Probe) {
+    fun say(line: String) = out { p.report(line) }
+    fun reached(name: String, r: ProbeReport.Reached) = say("$name=${r.status ?: "unreachable"}" + (r.code?.let { " $it" } ?: ""))
+    val r = client
+    if (r == null || r.stopping) return say("probe=offline")
+    // The realtime part is a call, so it waits its turn like one.
+    val realtime = p.realtime && busy == Busy.Idle
+    if (p.realtime && !realtime) say("realtime=skipped busy")
+    if (realtime) busy = Busy.Calling
+    root.launch {
+      try {
+        val report = r.client.probe(realtime)
+        reached("history", report.history)
+        reached("fs_read", report.fsRead)
+        report.realtime?.let { say("realtime=$it") }
+      } finally {
+        if (realtime) post(Ev.Done)
       }
     }
   }
