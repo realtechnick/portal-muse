@@ -29,6 +29,11 @@ import dev.wobsoriano.muse.pairing.SetupState
 import dev.wobsoriano.muse.pairing.Transport
 import dev.wobsoriano.muse.pairing.ASSUMED_MTU
 import dev.wobsoriano.muse.pairing.DEFAULT_WINDOW
+import dev.wobsoriano.muse.voice.CallAudio
+import dev.wobsoriano.muse.voice.CallCommand
+import dev.wobsoriano.muse.voice.CallEnd
+import dev.wobsoriano.muse.voice.CallOptions
+import dev.wobsoriano.muse.voice.CallView
 import java.io.FileNotFoundException
 import java.nio.file.NoSuchFileException
 import java.util.concurrent.atomic.AtomicInteger
@@ -73,6 +78,15 @@ enum class ReplyKind {
 /** Progress on the ask with this [id]. Done and Error end it. */
 data class AskUpdate(val id: String, val kind: ReplyKind, val text: String = "", val error: String = "")
 
+/** Progress on the call with this [id]. [Ended] comes once, last, after the call's audio is closed. */
+sealed interface CallUpdate {
+  val id: String
+
+  data class Phase(override val id: String, val view: CallView) : CallUpdate
+
+  data class Ended(override val id: String, val end: CallEnd) : CallUpdate
+}
+
 /** What the core tells the app. Calls come from the core's coroutines, one at a time, and must not block. */
 interface CoreListener {
   fun status(status: Status)
@@ -80,6 +94,8 @@ interface CoreListener {
   fun pairStatus(status: PairStatus)
 
   fun reply(update: AskUpdate)
+
+  fun call(update: CallUpdate) = Unit
 }
 
 /** The app's GATT server, as the pairing needs it. Calls come one at a time and must not block. */
@@ -241,6 +257,18 @@ class MuseCore(
 
   /** A question: exactly one of [text] and [wav], a whole RIFF/WAVE file of 16 kHz mono PCM16. */
   fun ask(id: String, text: String? = null, wav: ByteArray? = null) = post(Ev.Ask(id, text, wav))
+
+  /**
+   * A realtime voice call over [audio]. It is refused, as [CallEnd.Declined], while an ask or another
+   * call runs or when offline; a declined call never opened [audio].
+   */
+  fun call(id: String, audio: CallAudio, options: CallOptions = CallOptions()): Unit = TODO("realtime voice")
+
+  /** Hangs up or interrupts the running call; ignored when none runs. */
+  fun callCommand(command: CallCommand): Unit = TODO("realtime voice")
+
+  /** Asks the server a few questions and reports each as one line of statuses and codes; [realtime] also admits and ends a call. */
+  fun probe(realtime: Boolean = false, report: (String) -> Unit): Unit = TODO("realtime voice")
 
   /** Forgets the pairing. */
   fun unpair() = post(Ev.Unpair)
