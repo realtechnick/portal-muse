@@ -112,8 +112,11 @@ internal enum class Outcome {
 
 internal class Ended(val outcome: Outcome, val error: Throwable?)
 
-/** The session's address. [noiseHost] may carry a wss:// scheme, and ws:// in tests. */
-internal fun noiseUrl(noiseHost: String, vmId: String, allowPlaintext: Boolean): String {
+/**
+ * The session's address. [noiseHost] may carry a wss:// scheme, and ws:// in tests. [appId] names a
+ * voice connection's app, which is fixed for the whole connection; the device's own session has none.
+ */
+internal fun noiseUrl(noiseHost: String, vmId: String, allowPlaintext: Boolean, appId: String? = null): String {
   var scheme = "wss"
   var host = noiseHost
   if (noiseHost.startsWith("wss://")) {
@@ -126,7 +129,16 @@ internal fun noiseUrl(noiseHost: String, vmId: String, allowPlaintext: Boolean):
   if (host.isEmpty() || host.any { it in "/?#@ " }) {
     throw MuseException("muse: the Noise host in the credentials is not a host")
   }
-  return "$scheme://$host$NOISE_PATH?vm_id=${encodeURIComponent(vmId)}"
+  val url = "$scheme://$host$NOISE_PATH?vm_id=${encodeURIComponent(vmId)}"
+  return if (appId == null) url else "$url&app_id=${encodeURIComponent(validAppId(appId))}"
+}
+
+/** "hatch-web", or a positive int64 in ASCII digits, written without leading zeros as the SDK writes it. */
+internal fun validAppId(id: String): String {
+  if (id == "hatch-web") return id
+  val n = id.takeIf { it.isNotEmpty() && it.length <= 19 && it.all { c -> c in '0'..'9' } }?.toLongOrNull()
+  if (n == null || n <= 0) throw MuseException("muse: the app id must be hatch-web or a positive 64-bit integer")
+  return n.toString()
 }
 
 /**
