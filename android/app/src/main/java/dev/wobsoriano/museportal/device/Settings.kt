@@ -29,6 +29,11 @@ class Settings(context: Context) {
     get() = prefs.getBoolean(KEY_KEEP_LISTENING, false)
     set(value) = prefs.edit().putBoolean(KEY_KEEP_LISTENING, value).apply()
 
+  /** Announcement audio and spoken replies stay silent while this is on; cards still show. */
+  var muted: Boolean
+    get() = prefs.getBoolean(KEY_MUTED, false)
+    set(value) = prefs.edit().putBoolean(KEY_MUTED, value).apply()
+
   var setup: SetupProgress
     get() = prefs.getString(KEY_SETUP, null)?.let { s -> SetupProgress.entries.find { it.name == s } } ?: SetupProgress.NotStarted
     set(value) = prefs.edit().putString(KEY_SETUP, value.name).apply()
@@ -48,6 +53,7 @@ class Settings(context: Context) {
     const val KEY_TOKEN = "sdkToken"
     const val KEY_WAKE = "wakeEnabled"
     const val KEY_KEEP_LISTENING = "keepListening"
+    const val KEY_MUTED = "muted"
     const val KEY_SETUP = "setup"
     const val KEY_VOICE = "voice"
     const val KEY_RATE = "speechRate"
