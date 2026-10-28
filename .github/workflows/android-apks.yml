@@ -49,7 +49,16 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew :muse:test :wake:test :app:testDebugUnitTest :app:assembleDebug :probe:assembleDebug --console=plain
+          # NOTE: AGP 9 on these runners does not sign debug builds with
+          # ~/.android/debug.keystore (each run produced a fresh cert), so
+          # pass our persistent keystore through AGP's injected-signing
+          # properties instead — same ones Android Studio uses.
+          cp ~/.android/debug.keystore "$RUNNER_TEMP/debug.keystore"
+          ./gradlew :muse:test :wake:test :app:testDebugUnitTest :app:assembleDebug :probe:assembleDebug --console=plain \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/debug.keystore" \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
