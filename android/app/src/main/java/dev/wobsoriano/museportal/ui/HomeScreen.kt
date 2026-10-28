@@ -2,6 +2,7 @@ package dev.wobsoriano.museportal.ui
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Settings
@@ -45,7 +47,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,13 +64,13 @@ import java.util.Date
 import java.util.Locale
 
 /** What the turn has to say: the question as heard and the answer so far, or why it failed. */
-data class TurnText(val heard: String, val answer: String, val failed: Boolean)
+data class TurnText(val heard: String, val answer: String, val failed: Boolean, val complete: Boolean = true)
 
 val AskState.turnText: TurnText?
   get() =
       when (this) {
-        is AskState.Heard -> TurnText(heard, "", false)
-        is AskState.Answered -> TurnText(heard, answer, false).takeIf { heard.isNotEmpty() || answer.isNotEmpty() }
+        is AskState.Heard -> TurnText(heard, "", false, complete = false)
+        is AskState.Answered -> TurnText(heard, answer, false, complete).takeIf { heard.isNotEmpty() || answer.isNotEmpty() }
         is AskState.Failed -> TurnText("", reason, true)
         else -> null
       }
@@ -109,17 +115,25 @@ fun HomeScreen(
                     Character(mood, state.level, avatar, side)
                   }
               Spacer(Modifier.height(16.dp))
-              AnimatedContent(Line(state.statusLine, turn), transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) }, label = "turn") { line ->
+              AnimatedContent(
+                  targetState = Line(state.statusLine, turn, state.spokenRange),
+                  transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) },
+                  label = "turn",
+                  // Streaming snapshots and per-word ranges must not retrigger the crossfade —
+                  // that was the blinking. Only a new phase or a new question fades.
+                  contentKey = { it.status to (it.turn?.heard ?: "") }) { line ->
                 TurnWords(line, captionOnly = avatar != null)
               }
               val left = state.recordingLeftS
               if (left != null) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Recording… ${left / 60}:${(left % 60).toString().padStart(2, '0')} left",
+                    "Recording… ${left / 60}:${(left % 60).toString().padStart(2, '0')} left · tap to send",
                     style = MaterialTheme.typography.titleMedium,
                     color = Palette.Warn,
                     textAlign = TextAlign.Center)
+                Spacer(Modifier.height(10.dp))
+                CapLine(state.recordingFraction ?: 0f)
               }
             }
         }
@@ -164,7 +178,55 @@ private fun ReplayDialog(state: MuseState, onDismiss: () -> Unit, onReplayEntry:
       confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } })
 }
 
-private data class Line(val status: String, val turn: TurnText?)
+private data class Line(val status: String, val turn: TurnText?, val range: IntRange? = null)
+
+/** How many words of a long answer the caption area holds at once. */
+private const val CAPTION_WORDS = 30
+
+/** A slice of a long answer around the word that matters now, with that word's span inside it. */
+private data class CaptionWindow(val text: String, val highlight: IntRange?)
+
+/**
+ * Windows a long answer to [CAPTION_WORDS] words around [focus] (a char index: the spoken word
+ * while speaking, the end while the answer is still streaming in), so the words being heard are
+ * the words on screen instead of an unmoving head with an ellipsis swallowing the rest.
+ */
+private fun captionWindow(text: String, focus: Int, highlight: IntRange?): CaptionWindow {
+  val words = Regex("\\S+").findAll(text).toList()
+  if (words.size <= CAPTION_WORDS) return CaptionWindow(text, highlight)
+  val f = focus.coerceIn(0, text.length)
+  var fi = words.indexOfLast { it.range.first <= f }
+  if (fi < 0) fi = 0
+  var from = maxOf(0, fi - 8)
+  val to = minOf(words.size, from + CAPTION_WORDS)
+  from = maxOf(0, to - CAPTION_WORDS)
+  val startChar = words[from].range.first
+  val endChar = words[to - 1].range.last + 1
+  val prefix = if (from > 0) "… " else ""
+  val suffix = if (to < words.size) " …" else ""
+  val windowText = prefix + text.substring(startChar, endChar) + suffix
+  val hl =
+      highlight?.let {
+        val s = it.first - startChar + prefix.length
+        val e = it.last - startChar + prefix.length
+        if (e < 0 || s > windowText.length - 1) null
+        else s.coerceIn(0, windowText.length - 1)..e.coerceIn(0, windowText.length - 1)
+      }
+  return CaptionWindow(windowText, hl)
+}
+
+/** The recording time left as a line: full and green at the start, shrinking to the center and reddening. */
+@Composable
+private fun CapLine(fraction: Float) {
+  val shown by animateFloatAsState(fraction, tween(160, easing = LinearEasing), label = "cap")
+  Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+    Box(
+        Modifier.fillMaxWidth(shown.coerceIn(0f, 1f))
+            .height(6.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(lerp(Palette.Bad, Palette.Good, shown)))
+  }
+}
 
 @Composable
 private fun TurnWords(line: Line, captionOnly: Boolean) {
@@ -178,14 +240,36 @@ private fun TurnWords(line: Line, captionOnly: Boolean) {
     }
     if (turn != null && turn.answer.isNotEmpty()) {
       val size = if (captionOnly) 26.sp else if (turn.answer.length > 160) 30.sp else 38.sp
-      Text(
-          turn.answer,
-          fontSize = size,
-          lineHeight = size * 1.3f,
-          color = if (turn.failed) Palette.Bad else if (captionOnly) Palette.Dim else Palette.Text,
-          textAlign = TextAlign.Center,
-          maxLines = if (captionOnly) 3 else 6,
-          overflow = TextOverflow.Ellipsis)
+      val color = if (turn.failed) Palette.Bad else if (captionOnly) Palette.Dim else Palette.Text
+      val maxLines = if (captionOnly) 3 else 6
+      val range = line.range?.takeIf { !turn.complete || it.first in turn.answer.indices }
+      if (!turn.complete || range != null) {
+        // In progress: show the window around the spoken word (or the streaming tail), with the
+        // word being spoken lit up when the engine reports one.
+        val window = captionWindow(turn.answer, focus = range?.first ?: turn.answer.length, highlight = range)
+        val annotated =
+            buildAnnotatedString {
+              append(window.text)
+              window.highlight?.let { addStyle(SpanStyle(color = Palette.Accent, fontWeight = FontWeight.Bold), it.first, it.last + 1) }
+            }
+        Text(
+            annotated,
+            fontSize = size,
+            lineHeight = size * 1.3f,
+            color = color,
+            textAlign = TextAlign.Center,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis)
+      } else {
+        Text(
+            turn.answer,
+            fontSize = size,
+            lineHeight = size * 1.3f,
+            color = color,
+            textAlign = TextAlign.Center,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis)
+      }
     }
   }
 }
