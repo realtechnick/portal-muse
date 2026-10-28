@@ -25,6 +25,9 @@ class Speaker(
   @Volatile private var ready = false
   /** The mute switch: while on, [speak] stays silent. Set by the controller from the user's setting. */
   @Volatile var muted: Boolean = false
+
+  /** The character range of the current utterance being spoken, when the engine reports it. */
+  @Volatile var onRange: ((Int, Int) -> Unit)? = null
   /** The answer being spoken; a flushed earlier one reports its end late and must not end this one. */
   @Volatile private var current: String? = null
   private var count = 0
@@ -43,6 +46,10 @@ class Speaker(
     tts.setOnUtteranceProgressListener(
         object : UtteranceProgressListener() {
           override fun onStart(utteranceId: String?) = Unit
+
+          override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+            if (utteranceId != null && utteranceId == current) onRange?.invoke(start, end)
+          }
 
           override fun onDone(utteranceId: String?) = ended(utteranceId)
 
