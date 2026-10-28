@@ -109,7 +109,7 @@ class MainActivity : ComponentActivity() {
             when (val s = shown.screen) {
               Screen.Loading -> Box(Modifier.fillMaxSize())
               is Screen.Setup -> SetupScreen(s.step, state, canOverlay, set, if (readOnly) PreviewSetup else setupActions)
-              Screen.Home -> HomeScreen(state, set, onTap = { if (!readOnly) muse.tapMic() }, onSettings = { settings = true })
+              Screen.Home -> HomeScreen(state, set, onTap = { if (!readOnly) muse.tapMic() }, onSettings = { settings = true }, onDismissImage = { muse.clearImage() })
             }
       }
     }
