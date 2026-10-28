@@ -15,7 +15,7 @@ sealed interface Capture {
 }
 
 /**
- * Question capture at 16 kHz mono PCM16. Stops after trailing silence, at a 20 s cap, or when
+ * Question capture at 16 kHz mono PCM16. Stops after trailing silence, at an 18 s cap, or when
  * [shouldStop] turns true. Leaves out the first [skipMs], where the wake chime plays. Blocks; call it
  * off the main thread.
  *
@@ -28,11 +28,12 @@ object Microphone {
   private const val RATE = 16_000
 
   /**
-   * The longest a question may run; the screen counts down from this while recording. 20 s is the
-   * Muse service's own ceiling for a voice note — it answers longer ones with "The voice note is
-   * too long" — so the cap sits exactly there rather than recording notes that cannot be sent.
+   * The longest a question may run; the screen counts down from this while recording. The Muse
+   * service refuses long voice notes with "The voice note is too long": Boss's boundary sweep
+   * (2026-10-28) found 19 s refused but 18.5 s accepted, so the cap sits at 18 s with a small
+   * margin under the measured ceiling rather than recording notes that cannot be sent.
    */
-  const val MAX_MS = 20_000
+  const val MAX_MS = 18_000
   private const val TRAIL_SILENCE_MS = 1_600
   private const val MIN_SPEECH_MS = 300
 
