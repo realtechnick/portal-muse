@@ -23,6 +23,8 @@ class Speaker(
     private val onSpeaking: (Boolean) -> Unit,
 ) {
   @Volatile private var ready = false
+  /** The mute switch: while on, [speak] stays silent. Set by the controller from the user's setting. */
+  @Volatile var muted: Boolean = false
   /** The answer being spoken; a flushed earlier one reports its end late and must not end this one. */
   @Volatile private var current: String? = null
   private var count = 0
@@ -86,7 +88,7 @@ class Speaker(
 
   @Synchronized
   fun speak(text: String) {
-    if (!ready) return
+    if (!ready || muted) return
     val id = "answer${++count}"
     current = id
     onSpeaking(true)
