@@ -24,14 +24,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,6 +53,9 @@ import androidx.compose.ui.unit.sp
 import dev.wobsoriano.museportal.MuseState
 import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.avatar.AvatarSet
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** What the turn has to say: the question as heard and the answer so far, or why it failed. */
 data class TurnText(val heard: String, val answer: String, val failed: Boolean)
@@ -65,18 +75,25 @@ val AskState.turnText: TurnText?
  * screen or brushing it doesn't start a recording.
  */
 @Composable
-fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettings: () -> Unit, onDismissImage: () -> Unit = {}) {
+fun HomeScreen(
+    state: MuseState,
+    avatar: AvatarSet?,
+    onTap: () -> Unit,
+    onSettings: () -> Unit,
+    onDismissImage: () -> Unit = {},
+    onReplayEntry: (Long) -> Unit = {},
+    onToggleMute: () -> Unit = {},
+) {
   val mood = state.mood
+  var showReplays by remember { mutableStateOf(false) }
   Box(Modifier.fillMaxSize()) {
-        TopBar(state, onSettings)
         val pushed = state.shownImage
         if (pushed != null) {
           // An image Muse pushed covers the room screen until tapped away or replaced.
           Box(Modifier.fillMaxSize().background(Color.Black).clickable { onDismissImage() }, contentAlignment = Alignment.Center) {
             Image(pushed.asImageBitmap(), contentDescription = "Pushed image", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
           }
-          return@Box
-        }
+        } else {
         val turn = state.ask.turnText
         val side = if (avatar == null && turn != null) 260.dp else 440.dp
         Column(
@@ -95,8 +112,56 @@ fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettin
               AnimatedContent(Line(state.statusLine, turn), transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) }, label = "turn") { line ->
                 TurnWords(line, captionOnly = avatar != null)
               }
+              val left = state.recordingLeftS
+              if (left != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Recording… ${left / 60}:${(left % 60).toString().padStart(2, '0')} left",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Palette.Warn,
+                    textAlign = TextAlign.Center)
+              }
             }
+        }
+        // Drawn last so the buttons stay reachable while a pushed announcement covers the screen.
+        TopBar(state, onSettings, onReplay = { showReplays = true }, onToggleMute = onToggleMute)
       }
+  if (showReplays) {
+    ReplayDialog(state, onDismiss = { showReplays = false }, onReplayEntry = { id ->
+      showReplays = false
+      onReplayEntry(id)
+    })
+  }
+}
+
+/** The last few announcements, newest first; tapping one shows and plays it again. */
+@Composable
+private fun ReplayDialog(state: MuseState, onDismiss: () -> Unit, onReplayEntry: (Long) -> Unit) {
+  val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.US) }
+  AlertDialog(
+      onDismissRequest = onDismiss,
+      title = { Text("Recent announcements") },
+      text = {
+        if (state.announcements.isEmpty()) {
+          Text("No announcements yet.")
+        } else {
+          Column {
+            state.announcements.forEach { a ->
+              val kind = when {
+                a.hasCard && a.hasAudio -> "Card + audio"
+                a.hasCard -> "Card"
+                else -> "Audio"
+              }
+              Row(
+                  Modifier.fillMaxWidth().clickable { onReplayEntry(a.id) }.padding(vertical = 14.dp),
+                  verticalAlignment = Alignment.CenterVertically) {
+                    Text("${timeFormat.format(Date(a.atMs))} · $kind", style = MaterialTheme.typography.bodyLarge)
+                  }
+            }
+          }
+        }
+      },
+      confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } })
 }
 
 private data class Line(val status: String, val turn: TurnText?)
@@ -126,7 +191,7 @@ private fun TurnWords(line: Line, captionOnly: Boolean) {
 }
 
 @Composable
-private fun TopBar(state: MuseState, onSettings: () -> Unit) {
+private fun TopBar(state: MuseState, onSettings: () -> Unit, onReplay: () -> Unit, onToggleMute: () -> Unit) {
   Row(Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically) {
     val online = state.online
     val dot by animateColorAsState(if (online) Palette.Good else Palette.Warn, label = "dot")
@@ -134,6 +199,16 @@ private fun TopBar(state: MuseState, onSettings: () -> Unit) {
     Spacer(Modifier.size(14.dp))
     Text(state.connectionLabel, style = MaterialTheme.typography.bodyLarge, color = if (online) Palette.Faint else Palette.Warn)
     Spacer(Modifier.weight(1f))
+    IconButton(onClick = onReplay, modifier = Modifier.size(64.dp)) {
+      Icon(Icons.Filled.Replay, contentDescription = "Replay an announcement", tint = Palette.Dim, modifier = Modifier.size(36.dp))
+    }
+    IconButton(onClick = onToggleMute, modifier = Modifier.size(64.dp)) {
+      Icon(
+          if (state.muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+          contentDescription = if (state.muted) "Unmute" else "Mute",
+          tint = Palette.Dim,
+          modifier = Modifier.size(36.dp))
+    }
     IconButton(onClick = onSettings, modifier = Modifier.size(64.dp)) {
       Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Palette.Dim, modifier = Modifier.size(36.dp))
     }
