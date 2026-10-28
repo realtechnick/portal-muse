@@ -1,6 +1,7 @@
 package dev.wobsoriano.museportal
 
 import android.content.Context
+import android.os.Build
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -11,6 +12,7 @@ import dev.wobsoriano.muse.Logger
 import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.AskUpdate
 import dev.wobsoriano.muse.core.BleEvents
+import dev.wobsoriano.muse.core.BlePeripheral
 import dev.wobsoriano.muse.core.CoreConfig
 import dev.wobsoriano.muse.core.CoreListener
 import dev.wobsoriano.muse.core.MuseCore
@@ -26,6 +28,7 @@ import dev.wobsoriano.museportal.audio.Chime
 import dev.wobsoriano.museportal.audio.Microphone
 import dev.wobsoriano.museportal.audio.Speaker
 import dev.wobsoriano.museportal.ble.GattPeripheral
+import dev.wobsoriano.museportal.ble.StandardGattPeripheral
 import dev.wobsoriano.museportal.device.NetworkInfo
 import dev.wobsoriano.museportal.device.Settings
 import dev.wobsoriano.museportal.heymuse.WakeHost
@@ -122,26 +125,30 @@ class MuseController(private val context: Context) {
   @Volatile private var core: MuseCore? = null
   private var supervisor: Job? = null
 
-  private val ble =
-      GattPeripheral(
-          context,
-          object : BleEvents {
-            override fun advertising(ok: Boolean, error: String) {
-              core?.advertising(ok, error)
-            }
+  private val bleEvents =
+      object : BleEvents {
+        override fun advertising(ok: Boolean, error: String) {
+          core?.advertising(ok, error)
+        }
 
-            override fun connected(device: String) {
-              core?.connected(device)
-            }
+        override fun connected(device: String) {
+          core?.connected(device)
+        }
 
-            override fun wrote(data: ByteArray, mtu: Int) {
-              core?.wrote(data, mtu)
-            }
+        override fun wrote(data: ByteArray, mtu: Int) {
+          core?.wrote(data, mtu)
+        }
 
-            override fun disconnected() {
-              core?.disconnected()
-            }
-          })
+        override fun disconnected() {
+          core?.disconnected()
+        }
+      }
+
+  // Android 9 (the Portal) pairs through GattPeripheral's direct binder path; every other
+  // device gets the standard GATT server.
+  private val ble: BlePeripheral =
+      if (Build.VERSION.SDK_INT == Build.VERSION_CODES.P) GattPeripheral(context, bleEvents)
+      else StandardGattPeripheral(context, bleEvents)
 
   private val listener =
       object : CoreListener {
