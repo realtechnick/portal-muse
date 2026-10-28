@@ -1,14 +1,26 @@
 package dev.wobsoriano.museportal
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaPlayer
+import android.os.BatteryManager
 import android.os.Build
+import android.os.SystemClock
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.util.Log
+import dev.wobsoriano.muse.Command
+import dev.wobsoriano.muse.CommandFailed
 import dev.wobsoriano.muse.FileStore
+import dev.wobsoriano.muse.Handler
 import dev.wobsoriano.muse.Level
 import dev.wobsoriano.muse.Logger
+import dev.wobsoriano.muse.Param
+import dev.wobsoriano.muse.ParamType
 import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.AskUpdate
 import dev.wobsoriano.muse.core.BleEvents
@@ -43,8 +55,13 @@ import dev.wobsoriano.museportal.setup.SetupProgress
 import dev.wobsoriano.museportal.setup.screen
 import java.io.File
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
 import kotlin.concurrent.thread
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +73,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.json.JSONObject
 
 sealed interface CoreState {
   data object Running : CoreState
@@ -96,6 +119,8 @@ data class MuseState(
     /** Our screen is in front, so the overlay isn't needed. */
     val inFront: Boolean = false,
     val version: String = "",
+    /** An image Muse pushed with display.draw_url, shown over the home screen until dismissed. */
+    val shownImage: Bitmap? = null,
 ) {
   val screen: Screen
     get() = SetupFacts(hasToken, named, paired, setup).screen
@@ -173,6 +198,8 @@ class MuseController(private val context: Context) {
   private var expiry: Job? = null
   private var expiring: AskState? = null
   private val chime = Chime()
+  /** The audio.play_url player; replaced on each play. */
+  private var player: MediaPlayer? = null
   private var lastConfig: CoreConfig? = null
   @Volatile private var stopRecording = false
   @Volatile private var speaking = false
@@ -251,7 +278,7 @@ class MuseController(private val context: Context) {
     ble.unadvertise()
     _state.update { it.copy(core = CoreState.Running, connection = null, pairing = null) }
     val version = _state.value.version
-    val c = MuseCore(FileStore(File(context.filesDir, "muse.json"), ::syncDir), version, listener, ble, logger)
+    val c = MuseCore(FileStore(File(context.filesDir, "muse.json"), ::syncDir), version, listener, ble, logger, commands = gadgetCommands())
     core = c
     val config = currentConfig()
     c.config(config)
@@ -334,6 +361,7 @@ class MuseController(private val context: Context) {
             "Keep listening: ${s.keepListening}",
             "TTS: ${if (s.canSpeak) "ready, ${s.voices.size} voices, voice ${s.voice ?: "default"}, rate ${s.speechRate}" else "none"}",
             "Wi-Fi: ${network.snapshot().ssid.ifEmpty { "unknown" }}",
+            "Mic: ${Microphone.lastStats}",
         )
         .joinToString("\n")
   }
@@ -456,6 +484,7 @@ class MuseController(private val context: Context) {
 
   private fun record(skipMs: Int, waitForSpeechMs: Int = Int.MAX_VALUE) {
     speaker.stop()
+    stopPlayer()
     stopRecording = false
     thread(name = "muse-mic") {
       heyMuse.awaitMicFree(MIC_HANDOFF_MS)
@@ -477,6 +506,165 @@ class MuseController(private val context: Context) {
           }
         }
     step(input)
+  }
+
+  // ---- Commands Muse may invoke on this device (advertised at registration) ----
+
+  private fun arg(args: String, key: String): String =
+      try {
+        JSONObject(args).optString(key, "")
+      } catch (e: Exception) {
+        ""
+      }
+
+  private fun need(args: String, key: String): String =
+      arg(args, key).ifEmpty { throw CommandFailed("missing '$key'") }
+
+  /** The command set this app registers, mirroring the ESP32 gadget's surface. */
+  private fun gadgetCommands(): List<Command> =
+      listOf(
+          Command(
+              name = "device.health",
+              description = "Report this tablet gadget's health: connection, pairing, battery, uptime and the last microphone capture.",
+              handler =
+                  Handler { _, _ -> healthJson() },
+          ),
+          Command(
+              name = "display.draw_url",
+              description = "Download an image (JPEG or PNG) from a URL and show it full-screen on the tablet until dismissed or replaced.",
+              required = listOf(Param("url", ParamType.String, "The image URL")),
+              timeout = 60.seconds,
+              handler =
+                  Handler { args, _ ->
+                    val bmp = fetchImage(need(args, "url"))
+                    _state.update { it.copy(shownImage = bmp) }
+                    buildJsonObject {
+                      put("shown", true)
+                      put("width", bmp.width)
+                      put("height", bmp.height)
+                    }
+                  },
+          ),
+          Command(
+              name = "display.clear",
+              description = "Dismiss the image shown by display.draw_url and return to the home screen.",
+              handler =
+                  Handler { _, _ ->
+                    clearImage()
+                    buildJsonObject { put("cleared", true) }
+                  },
+          ),
+          Command(
+              name = "audio.play_url",
+              description = "Play an audio file from a URL through the tablet's speakers. Replaces whatever is playing.",
+              required = listOf(Param("url", ParamType.String, "The audio URL")),
+              timeout = 60.seconds,
+              handler =
+                  Handler { args, _ ->
+                    val url = need(args, "url")
+                    playUrl(url)
+                    buildJsonObject { put("playing", url) }
+                  },
+          ),
+          Command(
+              name = "audio.stop",
+              description = "Stop audio started by audio.play_url.",
+              handler =
+                  Handler { _, _ ->
+                    stopPlayer()
+                    buildJsonObject { put("stopped", true) }
+                  },
+          ),
+          Command(
+              name = "speaker.speak",
+              description = "Speak text aloud with the tablet's own text-to-speech voice.",
+              required = listOf(Param("text", ParamType.String, "What to say")),
+              handler =
+                  Handler { args, _ ->
+                    if (!_state.value.canSpeak) throw CommandFailed("text-to-speech is not ready")
+                    speaker.speak(need(args, "text"))
+                    buildJsonObject { put("spoken", true) }
+                  },
+          ),
+          Command(
+              name = "voice.ask",
+              description = "Ask Muse a question in words; the answer is shown and spoken on the tablet.",
+              required = listOf(Param("text", ParamType.String, "The question")),
+              handler =
+                  Handler { args, _ ->
+                    ask(need(args, "text"))
+                    buildJsonObject { put("asked", true) }
+                  },
+          ),
+      )
+
+  private fun healthJson(): JsonObject {
+    val s = _state.value
+    val batt = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    val level = batt?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+    val scale = batt?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+    val status = batt?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+    return buildJsonObject {
+      put("name", s.name)
+      put("app_version", s.version)
+      put("android", Build.VERSION.RELEASE)
+      put("sdk", Build.VERSION.SDK_INT)
+      put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
+      put("connection", s.connection?.phase?.label ?: "unknown")
+      put("paired", s.paired == true)
+      put("wake_enabled", s.wakeEnabled)
+      put("speaking", s.speaking)
+      if (level >= 0 && scale > 0) put("battery_pct", level * 100 / scale)
+      put("charging", status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
+      put("uptime_s", SystemClock.elapsedRealtime() / 1000)
+      put("last_mic", Microphone.lastStats)
+    }
+  }
+
+  private suspend fun fetchImage(url: String): Bitmap =
+      withContext(Dispatchers.IO) {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.connectTimeout = 15_000
+        c.readTimeout = 30_000
+        try {
+          if (c.responseCode != 200) throw CommandFailed("the image server answered HTTP ${c.responseCode}")
+          val bytes = c.inputStream.readBytes()
+          BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: throw CommandFailed("that URL did not serve an image")
+        } finally {
+          c.disconnect()
+        }
+      }
+
+  fun clearImage() = _state.update { it.copy(shownImage = null) }
+
+  private suspend fun playUrl(url: String) {
+    stopPlayer()
+    val mp = MediaPlayer()
+    player = mp
+    try {
+      mp.setDataSource(url)
+      suspendCancellableCoroutine { cont ->
+        mp.setOnPreparedListener { if (cont.isActive) cont.resume(Unit) }
+        mp.setOnErrorListener { _, what, extra ->
+          if (cont.isActive) cont.resumeWithException(CommandFailed("the player could not play it (error $what/$extra)"))
+          true
+        }
+        cont.invokeOnCancellation { runCatching { mp.release() } }
+        mp.prepareAsync()
+      }
+      mp.start()
+    } catch (e: Exception) {
+      runCatching { mp.release() }
+      if (player === mp) player = null
+      throw e
+    }
+  }
+
+  private fun stopPlayer() {
+    val mp = player ?: return
+    player = null
+    runCatching { if (mp.isPlaying) mp.stop() }
+    runCatching { mp.release() }
   }
 
   private companion object {
