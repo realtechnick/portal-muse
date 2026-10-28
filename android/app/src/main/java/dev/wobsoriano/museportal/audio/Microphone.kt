@@ -6,6 +6,7 @@ import android.media.MediaRecorder
 import android.util.Log
 import java.io.ByteArrayOutputStream
 import kotlin.math.abs
+import kotlin.math.log10
 
 sealed interface Capture {
   data class Wav(val bytes: ByteArray) : Capture
@@ -17,6 +18,10 @@ sealed interface Capture {
  * Question capture at 16 kHz mono PCM16. Stops after trailing silence, at a 12 s cap, or when
  * [shouldStop] turns true. Leaves out the first [skipMs], where the wake chime plays. Blocks; call it
  * off the main thread.
+ *
+ * The Portal's mics are loud and close; a tablet across a room is neither. Captured samples are run
+ * through a gain stage with a soft knee (see [softGain]) before anything measures or keeps them, so
+ * the speech gate, the level meter and the WAV Muse transcribes all hear the boosted signal.
  */
 object Microphone {
   private const val TAG = "MuseMic"
@@ -24,26 +29,52 @@ object Microphone {
   private const val MAX_MS = 12_000
   private const val TRAIL_SILENCE_MS = 1_600
   private const val MIN_SPEECH_MS = 300
-  private const val SPEECH_PEAK = 1_600
+
+  /** Speech is a chunk whose peak, after the gain stage, reaches this (≈ −27 dBFS). */
+  private const val SPEECH_PEAK = 1_500
+
+  /** How hard quiet audio is pushed: ×8 (≈ +18 dB) below the knee, gentler above it. */
+  private const val GAIN = 8
+  private const val KNEE = 24_000
+
+  /** The last capture's vital signs, for the diagnostics screen: what the gate heard, and the verdict. */
+  @Volatile var lastStats: String = "no capture yet"
+
+  private fun softGain(s: Int): Int {
+    val g = s * GAIN
+    val a = abs(g)
+    if (a <= KNEE) return g
+    val over = KNEE + (a - KNEE) / 4
+    return (if (g < 0) -over else over).coerceIn(-32_767, 32_767)
+  }
+
+  private fun dbfs(amplitude: Int) = "%.1f".format(20 * log10(maxOf(amplitude, 1).toDouble() / 32_768.0))
 
   /** [waitForSpeechMs]: give up when nobody has started talking by then. */
   fun record(skipMs: Int, shouldStop: () -> Boolean, waitForSpeechMs: Int = MAX_MS, onLevel: (Float) -> Unit): Capture {
     val rec =
         try {
-          open(MediaRecorder.AudioSource.VOICE_RECOGNITION) ?: open(MediaRecorder.AudioSource.MIC)
+          open(MediaRecorder.AudioSource.MIC) ?: open(MediaRecorder.AudioSource.VOICE_RECOGNITION)
         } catch (e: SecurityException) {
+          lastStats = "microphone permission is off"
           return Capture.Failed("Microphone permission is off")
         } catch (e: IllegalArgumentException) {
           null
-        } ?: return Capture.Failed("The microphone is not available")
+        }
+            ?: run {
+              lastStats = "the microphone is not available"
+              return Capture.Failed("The microphone is not available")
+            }
     try {
       rec.startRecording()
       if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+        lastStats = "another app is using the microphone"
         return Capture.Failed("Another app is using the microphone")
       }
       return capture(rec, skipMs, shouldStop, waitForSpeechMs, onLevel)
     } catch (e: IllegalStateException) {
       Log.w(TAG, "recording failed", e)
+      lastStats = "another app is using the microphone"
       return Capture.Failed("Another app is using the microphone")
     } finally {
       runCatching { rec.stop() }
@@ -83,17 +114,20 @@ object Microphone {
     var elapsedMs = 0
     var speechMs = 0
     var silenceMs = 0
+    var rawPeak = 0
     while (!shouldStop() && elapsedMs < MAX_MS && (speechMs > 0 || elapsedMs < waitForSpeechMs)) {
       val n = rec.read(chunk, 0, chunk.size)
       if (n <= 0) break
       var peak = 0
       for (i in 0 until n) {
         val s = chunk[i].toInt()
-        peak = maxOf(peak, abs(s))
-        pcm.write(s and 0xff)
-        pcm.write((s shr 8) and 0xff)
+        rawPeak = maxOf(rawPeak, abs(s))
+        val v = softGain(s)
+        peak = maxOf(peak, abs(v))
+        pcm.write(v and 0xff)
+        pcm.write((v shr 8) and 0xff)
       }
-      onLevel((peak / 8000f).coerceIn(0f, 1f))
+      onLevel((peak / 24_000f).coerceIn(0f, 1f))
       val ms = n * 1000 / RATE
       elapsedMs += ms
       if (peak >= SPEECH_PEAK) {
@@ -104,7 +138,11 @@ object Microphone {
         if (silenceMs >= TRAIL_SILENCE_MS) break
       }
     }
-    if (speechMs < MIN_SPEECH_MS) return Capture.Failed("I didn't hear anything")
+    if (speechMs < MIN_SPEECH_MS) {
+      lastStats = "no speech heard: listened ${elapsedMs}ms, raw peak ${dbfs(rawPeak)} dBFS"
+      return Capture.Failed("I didn't hear anything")
+    }
+    lastStats = "ok: speech ${speechMs}ms of ${elapsedMs}ms, raw peak ${dbfs(rawPeak)} dBFS (gain x$GAIN)"
     return Capture.Wav(Wav.wrap(pcm.toByteArray(), RATE))
   }
 }
