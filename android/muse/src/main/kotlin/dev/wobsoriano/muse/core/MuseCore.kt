@@ -3,6 +3,7 @@ package dev.wobsoriano.muse.core
 import dev.wobsoriano.muse.AskInput
 import dev.wobsoriano.muse.BusyException
 import dev.wobsoriano.muse.Client
+import dev.wobsoriano.muse.Command
 import dev.wobsoriano.muse.ConnState
 import dev.wobsoriano.muse.Credentials
 import dev.wobsoriano.muse.FileStore
@@ -212,6 +213,8 @@ class MuseCore(
     ble: BlePeripheral,
     private val log: Logger = Logger.None,
     private val http: OkHttpClient? = null,
+    /** Commands the client advertises to Muse at registration; the app supplies its own. */
+    private val commands: List<Command> = emptyList(),
 ) : BleEvents {
   private val out = Out(listener, ble)
   private val events = Channel<Ev>(Channel.UNLIMITED)
@@ -435,6 +438,7 @@ class MuseCore(
                 displayName = cfg.name,
                 version = version,
                 sdkToken = cfg.sdkToken,
+                commands = commands,
                 logger = log,
                 onState = { s -> post(Ev.ClientSaid(r, s)) },
                 http = http))
