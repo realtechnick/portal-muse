@@ -38,6 +38,13 @@ jobs:
           mkdir -p ~/.android
           echo "${{ secrets.DEBUG_KEYSTORE_B64 }}" | base64 -d > ~/.android/debug.keystore
 
+      - name: Verify restored keystore fingerprint
+        run: |
+          ls -la ~/.android/
+          keytool -exportcert -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | sha256sum
+          echo "HOME=$HOME ANDROID_USER_HOME=${ANDROID_USER_HOME:-unset}"
+          find "$HOME" -name 'debug.keystore' 2>/dev/null || true
+
       - name: Test and build
         working-directory: android
         run: |
