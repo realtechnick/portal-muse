@@ -41,6 +41,8 @@ import dev.wobsoriano.museportal.audio.Microphone
 import dev.wobsoriano.museportal.audio.Speaker
 import dev.wobsoriano.museportal.ble.GattPeripheral
 import dev.wobsoriano.museportal.ble.StandardGattPeripheral
+import dev.wobsoriano.museportal.device.AnnouncementInfo
+import dev.wobsoriano.museportal.device.AnnouncementStore
 import dev.wobsoriano.museportal.device.NetworkInfo
 import dev.wobsoriano.museportal.device.Settings
 import dev.wobsoriano.museportal.heymuse.WakeHost
@@ -121,6 +123,12 @@ data class MuseState(
     val version: String = "",
     /** An image Muse pushed with display.draw_url, shown over the home screen until dismissed. */
     val shownImage: Bitmap? = null,
+    /** Announcement audio and spoken replies are silenced; cards still show. */
+    val muted: Boolean = false,
+    /** The recent announcements the replay button can play again, newest first. */
+    val announcements: List<AnnouncementInfo> = emptyList(),
+    /** Seconds of recording left before the cap, while a question is being captured; else null. */
+    val recordingLeftS: Int? = null,
 ) {
   val screen: Screen
     get() = SetupFacts(hasToken, named, paired, setup).screen
@@ -134,6 +142,12 @@ data class MuseState(
  */
 class MuseController(private val context: Context) {
   private val settings = Settings(context)
+  private val announcementStore = AnnouncementStore(context)
+  /** The newest announcement entry, which a following audio.play_url belongs to. */
+  @Volatile private var lastEntryId: Long? = null
+  @Volatile private var lastEntryAtMs: Long = 0
+  /** When the current capture's chunks began, for the on-screen countdown; 0 when not recording. */
+  @Volatile private var recordStartMs: Long = 0
   private val _state =
       MutableStateFlow(
           MuseState(
@@ -142,6 +156,8 @@ class MuseController(private val context: Context) {
               keepListening = settings.keepListening,
               voice = settings.voice,
               speechRate = settings.speechRate,
+              muted = settings.muted,
+              announcements = announcementStore.loadAll(),
               setup = settings.setup)
               .withSettings())
   val state: StateFlow<MuseState> = _state.asStateFlow()
@@ -221,6 +237,10 @@ class MuseController(private val context: Context) {
 
             override fun wakeState(state: WakeState) = _state.update { it.copy(wake = state) }
           })
+
+  init {
+    speaker.muted = settings.muted
+  }
 
   @Synchronized
   fun start() {
@@ -327,6 +347,17 @@ class MuseController(private val context: Context) {
   fun setKeepListening(on: Boolean) {
     settings.keepListening = on
     _state.update { it.copy(keepListening = on) }
+  }
+
+  /** The home screen's mute switch: silences announcement audio and spoken replies until unmuted. */
+  fun setMuted(on: Boolean) {
+    settings.muted = on
+    speaker.muted = on
+    _state.update { it.copy(muted = on) }
+    if (on) {
+      stopPlayer()
+      speaker.stop()
+    }
   }
 
   fun setVoice(name: String?, rate: Float) {
@@ -437,6 +468,7 @@ class MuseController(private val context: Context) {
       effect = next.effect
       s.copy(ask = next.state)
     }
+    updateCountdown(input)
     when (val e = effect) {
       AskEffect.StartRecording -> record(skipMs)
       AskEffect.ListenForReply -> {
@@ -448,6 +480,24 @@ class MuseController(private val context: Context) {
       null -> Unit
     }
     afterStep()
+  }
+
+  /**
+   * Keeps the recording countdown honest: it starts at the first level chunk of a capture (the mic
+   * loop is already past its skip by then, on both the tap and the wake path) and clears the moment
+   * the state leaves [AskState.Recording].
+   */
+  private fun updateCountdown(input: AskInput) {
+    if (_state.value.ask !is AskState.Recording) {
+      recordStartMs = 0
+      if (_state.value.recordingLeftS != null) _state.update { it.copy(recordingLeftS = null) }
+      return
+    }
+    if (input !is AskInput.Level) return
+    if (recordStartMs == 0L) recordStartMs = SystemClock.elapsedRealtime()
+    val leftMs = recordStartMs + Microphone.MAX_MS - SystemClock.elapsedRealtime()
+    val left = kotlin.math.ceil(leftMs / 1000.0).toInt().coerceIn(0, Microphone.MAX_MS / 1000)
+    if (_state.value.recordingLeftS != left) _state.update { it.copy(recordingLeftS = left) }
   }
 
   private fun afterStep() {
@@ -536,8 +586,15 @@ class MuseController(private val context: Context) {
               timeout = 60.seconds,
               handler =
                   Handler { args, _ ->
-                    val bmp = fetchImage(need(args, "url"))
-                    _state.update { it.copy(shownImage = bmp) }
+                    val url = need(args, "url")
+                    val (bmp, bytes) = fetchImage(url)
+                    val infos =
+                        withContext(Dispatchers.IO) {
+                          lastEntryId = announcementStore.saveCard(bytes, url)
+                          lastEntryAtMs = System.currentTimeMillis()
+                          announcementStore.loadAll()
+                        }
+                    _state.update { it.copy(shownImage = bmp, announcements = infos) }
                     buildJsonObject {
                       put("shown", true)
                       put("width", bmp.width)
@@ -563,7 +620,11 @@ class MuseController(private val context: Context) {
                   Handler { args, _ ->
                     val url = need(args, "url")
                     playUrl(url)
-                    buildJsonObject { put("playing", url) }
+                    scope.launch { recordAudio(url) }
+                    buildJsonObject {
+                      put("playing", url)
+                      if (settings.muted) put("muted", true)
+                    }
                   },
           ),
           Command(
@@ -618,26 +679,71 @@ class MuseController(private val context: Context) {
       put("charging", status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
       put("uptime_s", SystemClock.elapsedRealtime() / 1000)
       put("last_mic", Microphone.lastStats)
+      put("muted", s.muted)
+      put("announcements", s.announcements.size)
     }
   }
 
-  private suspend fun fetchImage(url: String): Bitmap =
+  /** Downloads [url]'s bytes, for the image fetch and for saving announcement audio. */
+  private suspend fun fetchBytes(url: String): ByteArray =
       withContext(Dispatchers.IO) {
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
         c.readTimeout = 30_000
         try {
-          if (c.responseCode != 200) throw CommandFailed("the image server answered HTTP ${c.responseCode}")
-          val bytes = c.inputStream.readBytes()
-          BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: throw CommandFailed("that URL did not serve an image")
+          if (c.responseCode != 200) throw CommandFailed("the server answered HTTP ${c.responseCode}")
+          c.inputStream.readBytes()
         } finally {
           c.disconnect()
         }
       }
 
+  private suspend fun fetchImage(url: String): Pair<Bitmap, ByteArray> {
+    val bytes = fetchBytes(url)
+    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: throw CommandFailed("that URL did not serve an image")
+    return bmp to bytes
+  }
+
+  /**
+   * Saves a played announcement's audio for the replay list: attached to the card that was just
+   * pushed when there is a fresh one, otherwise kept as an audio-only entry. A failed download still
+   * records the entry with its URL, which replay then streams.
+   */
+  private suspend fun recordAudio(url: String) {
+    val bytes = runCatching { fetchBytes(url) }.getOrNull()
+    val infos =
+        withContext(Dispatchers.IO) {
+          val last = lastEntryId
+          val attached =
+              last != null &&
+                  System.currentTimeMillis() - lastEntryAtMs < ENTRY_PAIR_WINDOW_MS &&
+                  announcementStore.attachAudio(last, bytes, url)
+          if (!attached) {
+            lastEntryId = announcementStore.saveAudioOnly(bytes, url)
+            lastEntryAtMs = System.currentTimeMillis()
+          }
+          announcementStore.loadAll()
+        }
+    _state.update { it.copy(announcements = infos) }
+  }
+
+  /** The replay button: shows a saved announcement's card again and plays its audio. */
+  fun replayAnnouncement(id: Long) {
+    scope.launch {
+      val entry = withContext(Dispatchers.IO) { announcementStore.entry(id) } ?: return@launch
+      entry.cardFile?.let { f ->
+        BitmapFactory.decodeFile(f.path)?.let { bmp -> _state.update { it.copy(shownImage = bmp) } }
+      }
+      val audio = entry.audioFile?.absolutePath ?: entry.audioUrl
+      if (audio != null) runCatching { playUrl(audio) }
+    }
+  }
+
   fun clearImage() = _state.update { it.copy(shownImage = null) }
 
   private suspend fun playUrl(url: String) {
+    // Muted: the announcement is still recorded for replay, it just isn't heard now.
+    if (settings.muted) return
     stopPlayer()
     val mp = MediaPlayer()
     player = mp
@@ -673,6 +779,8 @@ class MuseController(private val context: Context) {
     const val MAX_BACKOFF_MS = 30_000L
     const val MIC_HANDOFF_MS = 1_000L
     const val REPLY_WAIT_MS = 6_000
+    /** A card and the audio that follows it within this window are one announcement. */
+    const val ENTRY_PAIR_WINDOW_MS = 120_000L
     const val ANSWER_SHOWN_MS = 20_000L
     const val FAILURE_SHOWN_MS = 8_000L
 
