@@ -129,6 +129,10 @@ data class MuseState(
     val announcements: List<AnnouncementInfo> = emptyList(),
     /** Seconds of recording left before the cap, while a question is being captured; else null. */
     val recordingLeftS: Int? = null,
+    /** The fraction of the capture cap left (1 = just started), for the shrinking line; else null. */
+    val recordingFraction: Float? = null,
+    /** The character range of the answer being spoken right now, when the TTS engine reports it. */
+    val spokenRange: IntRange? = null,
 ) {
   val screen: Screen
     get() = SetupFacts(hasToken, named, paired, setup).screen
@@ -208,7 +212,7 @@ class MuseController(private val context: Context) {
           settings.speechRate,
           onReady = { info -> _state.update { it.copy(canSpeak = info.ready, voices = info.voices) } }) { speaking ->
             this.speaking = speaking
-            _state.update { it.copy(speaking = speaking) }
+            _state.update { it.copy(speaking = speaking, spokenRange = if (speaking) it.spokenRange else null) }
             if (!speaking) step(AskInput.Spoken(settings.keepListening)) else afterStep()
           }
   private var expiry: Job? = null
@@ -240,6 +244,7 @@ class MuseController(private val context: Context) {
 
   init {
     speaker.muted = settings.muted
+    speaker.onRange = { start, end -> _state.update { it.copy(spokenRange = start..end) } }
   }
 
   @Synchronized
@@ -490,14 +495,21 @@ class MuseController(private val context: Context) {
   private fun updateCountdown(input: AskInput) {
     if (_state.value.ask !is AskState.Recording) {
       recordStartMs = 0
-      if (_state.value.recordingLeftS != null) _state.update { it.copy(recordingLeftS = null) }
+      if (_state.value.recordingLeftS != null || _state.value.recordingFraction != null) {
+        _state.update { it.copy(recordingLeftS = null, recordingFraction = null) }
+      }
       return
     }
     if (input !is AskInput.Level) return
     if (recordStartMs == 0L) recordStartMs = SystemClock.elapsedRealtime()
     val leftMs = recordStartMs + Microphone.MAX_MS - SystemClock.elapsedRealtime()
     val left = kotlin.math.ceil(leftMs / 1000.0).toInt().coerceIn(0, Microphone.MAX_MS / 1000)
-    if (_state.value.recordingLeftS != left) _state.update { it.copy(recordingLeftS = left) }
+    val fraction = (leftMs.toFloat() / Microphone.MAX_MS).coerceIn(0f, 1f)
+    val cur = _state.value
+    val fractionMoved = cur.recordingFraction == null || kotlin.math.abs(cur.recordingFraction!! - fraction) >= 0.005f
+    if (cur.recordingLeftS != left || fractionMoved) {
+      _state.update { it.copy(recordingLeftS = left, recordingFraction = fraction) }
+    }
   }
 
   private fun afterStep() {
