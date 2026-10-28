@@ -27,6 +27,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.PairState
@@ -55,6 +58,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    hideSystemBars()
     MuseService.start(this)
     applyExtras(intent)
     val missing =
@@ -77,6 +81,22 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
+  }
+
+  /**
+   * Games-and-video mode: the whole panel belongs to the room screen — a pushed 1920×1200 card gets
+   * every pixel of it — and the system bars only appear on a swipe from the edge.
+   */
+  private fun hideSystemBars() {
+    WindowCompat.setDecorFitsSystemWindows(window, false)
+    val controller = WindowInsetsControllerCompat(window, window.decorView)
+    controller.hide(WindowInsetsCompat.Type.systemBars())
+    controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (hasFocus) hideSystemBars()
   }
 
   override fun onResume() {
