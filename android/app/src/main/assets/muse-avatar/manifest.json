@@ -1,27 +1,27 @@
 {
- "cell": 64,
+ "cell": 512,
  "fps": 12.5,
  "animations": {
   "idle": {
-   "frames": 75,
-   "columns": 10,
+   "frames": 1,
+   "columns": 1,
    "loop": true
   },
   "listening": {
-   "frames": 50,
-   "columns": 10,
+   "frames": 1,
+   "columns": 1,
    "loop": true
   },
   "thinking": {
-   "frames": 50,
-   "columns": 10,
+   "frames": 1,
+   "columns": 1,
    "loop": true
   },
   "talking": {
-   "frames": 50,
-   "columns": 10,
+   "frames": 1,
+   "columns": 1,
    "loop": true
   }
  },
- "grid": 0.72
+ "grid": 0.0
 }
