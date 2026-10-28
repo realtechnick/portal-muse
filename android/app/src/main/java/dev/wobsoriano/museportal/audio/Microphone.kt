@@ -15,7 +15,7 @@ sealed interface Capture {
 }
 
 /**
- * Question capture at 16 kHz mono PCM16. Stops after trailing silence, at a 12 s cap, or when
+ * Question capture at 16 kHz mono PCM16. Stops after trailing silence, at a 30 s cap, or when
  * [shouldStop] turns true. Leaves out the first [skipMs], where the wake chime plays. Blocks; call it
  * off the main thread.
  *
@@ -26,7 +26,9 @@ sealed interface Capture {
 object Microphone {
   private const val TAG = "MuseMic"
   private const val RATE = 16_000
-  private const val MAX_MS = 12_000
+
+  /** The longest a question may run; the screen counts down from this while recording. */
+  const val MAX_MS = 30_000
   private const val TRAIL_SILENCE_MS = 1_600
   private const val MIN_SPEECH_MS = 300
 
