@@ -244,7 +244,10 @@ class MuseController(private val context: Context) {
 
   init {
     speaker.muted = settings.muted
-    speaker.onRange = { start, end -> _state.update { it.copy(spokenRange = start..end) } }
+    speaker.onRange = { start, end ->
+      // The engine's range end is exclusive; spokenRange is an inclusive char range.
+      if (end > start) _state.update { it.copy(spokenRange = start..end - 1) }
+    }
   }
 
   @Synchronized
