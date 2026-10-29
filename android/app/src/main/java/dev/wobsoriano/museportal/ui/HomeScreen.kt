@@ -181,7 +181,7 @@ private fun ReplayDialog(state: MuseState, onDismiss: () -> Unit, onReplayEntry:
 private data class Line(val status: String, val turn: TurnText?, val range: IntRange? = null)
 
 /** Chars of answer per caption page on the avatar layout: about four lines at caption size. */
-private const val CAPTION_PAGE_CHARS = 270
+private const val CAPTION_PAGE_CHARS = 352
 
 /** Chars per page on the large-text layout, where lines hold fewer, bigger characters. */
 private const val FULL_PAGE_CHARS = 480
@@ -197,7 +197,16 @@ private data class CaptionPage(val text: String, val highlight: IntRange?)
  * no sliding, no half-scrolled lines.
  */
 private fun captionPage(text: String, focus: Int, highlight: IntRange?, charsPerPage: Int): CaptionPage {
-  if (text.length <= charsPerPage) return CaptionPage(text, highlight)
+  if (text.isEmpty()) return CaptionPage(text, null)
+  if (text.length <= charsPerPage) {
+    val hl =
+        highlight?.let {
+          val s = it.first.coerceIn(0, text.length - 1)
+          val e = it.last.coerceIn(0, text.length - 1)
+          if (e < s) null else s..e
+        }
+    return CaptionPage(text, hl)
+  }
   val f = focus.coerceIn(0, text.length)
   var pageStart = 0
   while (true) {
@@ -212,7 +221,8 @@ private fun captionPage(text: String, focus: Int, highlight: IntRange?, charsPer
           highlight?.let {
             val s = it.first - pageStart
             val e = it.last - pageStart
-            if (e < 0 || s > pageLength) null else s.coerceIn(0, pageLength)..e.coerceIn(0, pageLength)
+            if (e < 0 || s > pageLength - 1) null
+            else s.coerceIn(0, pageLength - 1)..e.coerceIn(0, pageLength - 1)
           }
       return CaptionPage(text.substring(pageStart, pageEnd), hl)
     }
@@ -260,7 +270,12 @@ private fun TurnWords(line: Line, captionOnly: Boolean) {
         val annotated =
             buildAnnotatedString {
               append(page.text)
-              page.highlight?.let { addStyle(SpanStyle(color = Palette.Accent, fontWeight = FontWeight.Bold), it.first, it.last + 1) }
+              page.highlight?.let {
+                addStyle(
+                    SpanStyle(color = Palette.Accent, fontWeight = FontWeight.Bold),
+                    it.first.coerceIn(0, page.text.length),
+                    minOf(it.last + 1, page.text.length))
+              }
             }
         Text(
             annotated,
