@@ -180,39 +180,44 @@ private fun ReplayDialog(state: MuseState, onDismiss: () -> Unit, onReplayEntry:
 
 private data class Line(val status: String, val turn: TurnText?, val range: IntRange? = null)
 
-/** How many words of a long answer the caption area holds at once. */
-private const val CAPTION_WORDS = 30
+/** Chars of answer per caption page on the avatar layout: about four lines at caption size. */
+private const val CAPTION_PAGE_CHARS = 270
 
-/** A slice of a long answer around the word that matters now, with that word's span inside it. */
-private data class CaptionWindow(val text: String, val highlight: IntRange?)
+/** Chars per page on the large-text layout, where lines hold fewer, bigger characters. */
+private const val FULL_PAGE_CHARS = 480
+
+/** One page of a long answer, with the spoken word's span inside it when there is one. */
+private data class CaptionPage(val text: String, val highlight: IntRange?)
 
 /**
- * Windows a long answer to [CAPTION_WORDS] words around [focus] (a char index: the spoken word
- * while speaking, the end while the answer is still streaming in), so the words being heard are
- * the words on screen instead of an unmoving head with an ellipsis swallowing the rest.
+ * Pages a long answer on word breaks, each page up to [charsPerPage] chars, and returns the page
+ * holding [focus] (a char index). While the answer streams in, focus sits at 0: the first page
+ * fills and holds instead of the text racing past. While it is spoken, focus is the spoken word,
+ * so a page holds until the voice reaches its last word and then flips to the next page whole —
+ * no sliding, no half-scrolled lines.
  */
-private fun captionWindow(text: String, focus: Int, highlight: IntRange?): CaptionWindow {
-  val words = Regex("\\S+").findAll(text).toList()
-  if (words.size <= CAPTION_WORDS) return CaptionWindow(text, highlight)
+private fun captionPage(text: String, focus: Int, highlight: IntRange?, charsPerPage: Int): CaptionPage {
+  if (text.length <= charsPerPage) return CaptionPage(text, highlight)
   val f = focus.coerceIn(0, text.length)
-  var fi = words.indexOfLast { it.range.first <= f }
-  if (fi < 0) fi = 0
-  var from = maxOf(0, fi - 8)
-  val to = minOf(words.size, from + CAPTION_WORDS)
-  from = maxOf(0, to - CAPTION_WORDS)
-  val startChar = words[from].range.first
-  val endChar = words[to - 1].range.last + 1
-  val prefix = if (from > 0) "… " else ""
-  val suffix = if (to < words.size) " …" else ""
-  val windowText = prefix + text.substring(startChar, endChar) + suffix
-  val hl =
-      highlight?.let {
-        val s = it.first - startChar + prefix.length
-        val e = it.last - startChar + prefix.length
-        if (e < 0 || s > windowText.length - 1) null
-        else s.coerceIn(0, windowText.length - 1)..e.coerceIn(0, windowText.length - 1)
-      }
-  return CaptionWindow(windowText, hl)
+  var pageStart = 0
+  while (true) {
+    var pageEnd = minOf(text.length, pageStart + charsPerPage)
+    if (pageEnd < text.length) {
+      val breakAt = text.lastIndexOf(' ', pageEnd - 1)
+      if (breakAt > pageStart) pageEnd = breakAt
+    }
+    if (f in pageStart..pageEnd || pageEnd == text.length) {
+      val pageLength = pageEnd - pageStart
+      val hl =
+          highlight?.let {
+            val s = it.first - pageStart
+            val e = it.last - pageStart
+            if (e < 0 || s > pageLength) null else s.coerceIn(0, pageLength)..e.coerceIn(0, pageLength)
+          }
+      return CaptionPage(text.substring(pageStart, pageEnd), hl)
+    }
+    pageStart = pageEnd + 1 // step over the break space
+  }
 }
 
 /** The recording time left as a line: full and green at the start, shrinking to the center and reddening. */
@@ -241,16 +246,21 @@ private fun TurnWords(line: Line, captionOnly: Boolean) {
     if (turn != null && turn.answer.isNotEmpty()) {
       val size = if (captionOnly) 26.sp else if (turn.answer.length > 160) 30.sp else 38.sp
       val color = if (turn.failed) Palette.Bad else if (captionOnly) Palette.Dim else Palette.Text
-      val maxLines = if (captionOnly) 3 else 6
+      val maxLines = if (captionOnly) 5 else 6
       val range = line.range?.takeIf { !turn.complete || it.first in turn.answer.indices }
       if (!turn.complete || range != null) {
-        // In progress: show the window around the spoken word (or the streaming tail), with the
-        // word being spoken lit up when the engine reports one.
-        val window = captionWindow(turn.answer, focus = range?.first ?: turn.answer.length, highlight = range)
+        // In progress: show the page holding the spoken word (page one while the answer is
+        // still streaming in), with the word being spoken lit up when the engine reports one.
+        val page =
+            captionPage(
+                turn.answer,
+                focus = range?.first ?: 0,
+                highlight = range,
+                charsPerPage = if (captionOnly) CAPTION_PAGE_CHARS else FULL_PAGE_CHARS)
         val annotated =
             buildAnnotatedString {
-              append(window.text)
-              window.highlight?.let { addStyle(SpanStyle(color = Palette.Accent, fontWeight = FontWeight.Bold), it.first, it.last + 1) }
+              append(page.text)
+              page.highlight?.let { addStyle(SpanStyle(color = Palette.Accent, fontWeight = FontWeight.Bold), it.first, it.last + 1) }
             }
         Text(
             annotated,
