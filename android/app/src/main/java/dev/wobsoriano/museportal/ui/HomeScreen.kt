@@ -157,28 +157,12 @@ fun HomeScreen(
                 CapLine(state.recordingFraction ?: 0f)
               }
             }
-        }
-        // Drawn last so the buttons stay reachable while a pushed announcement covers the screen.
-        TopBar(state, onSettings, onReplay = { showReplays = true }, onToggleMute = onToggleMute)
-        // The big phone button: starts a call, or ends the one running. Hidden while a pushed
-        // card covers the screen (unless a call is live) so announcements stay clean.
-        val calling = state.ask is AskState.Calling
-        val callResting = state.ask.let { it is AskState.Idle || (it is AskState.Answered && it.complete) || it is AskState.Failed }
-        if (state.online && (calling || (pushed == null && callResting))) {
-          Box(
-              Modifier.align(Alignment.BottomCenter).padding(bottom = 30.dp).size(76.dp).clip(CircleShape)
-                  .background(if (calling) Palette.Bad else Palette.Good)
-                  .clickable { if (calling) onEndCall() else onStartCall() },
-              contentAlignment = Alignment.Center) {
-                Icon(
-                    if (calling) Icons.Filled.CallEnd else Icons.Filled.Phone,
-                    contentDescription = if (calling) "End call" else "Start voice call",
-                    tint = Color.White,
-                    modifier = Modifier.size(38.dp))
-              }
+        // The bar lives with the home content, drawn last: while a pushed card is up, the
+        // card gets the whole screen to itself — no buttons over the artwork.
+        TopBar(state, onSettings, onReplay = { showReplays = true }, onToggleMute = onToggleMute, onCallToggle = { if (state.ask is AskState.Calling) onEndCall() else onStartCall() })
         }
       }
-  if (showReplays) {
+  if (showReplays && state.shownImage == null) {
     ReplayDialog(state, onDismiss = { showReplays = false }, onReplayEntry = { id ->
       showReplays = false
       onReplayEntry(id)
@@ -360,7 +344,7 @@ private fun TurnWords(line: Line, captionOnly: Boolean) {
 }
 
 @Composable
-private fun TopBar(state: MuseState, onSettings: () -> Unit, onReplay: () -> Unit, onToggleMute: () -> Unit) {
+private fun TopBar(state: MuseState, onSettings: () -> Unit, onReplay: () -> Unit, onToggleMute: () -> Unit, onCallToggle: () -> Unit = {}) {
   Row(Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically) {
     val online = state.online
     val dot by animateColorAsState(if (online) Palette.Good else Palette.Warn, label = "dot")
@@ -368,6 +352,22 @@ private fun TopBar(state: MuseState, onSettings: () -> Unit, onReplay: () -> Uni
     Spacer(Modifier.size(14.dp))
     Text(state.connectionLabel, style = MaterialTheme.typography.bodyLarge, color = if (online) Palette.Faint else Palette.Warn)
     Spacer(Modifier.weight(1f))
+    // The phone button lives up here with the other actions: green handset at rest, red
+    // CallEnd while a call runs. Shown only when a call could actually start or end.
+    val calling = state.ask is AskState.Calling
+    val callResting = state.ask.let { it is AskState.Idle || (it is AskState.Answered && it.complete) || it is AskState.Failed }
+    if (state.online && (calling || callResting)) {
+      Box(
+          Modifier.size(56.dp).clip(CircleShape).background(if (calling) Palette.Bad else Palette.Good).clickable { onCallToggle() },
+          contentAlignment = Alignment.Center) {
+            Icon(
+                if (calling) Icons.Filled.CallEnd else Icons.Filled.Phone,
+                contentDescription = if (calling) "End call" else "Start voice call",
+                tint = Color.White,
+                modifier = Modifier.size(30.dp))
+          }
+      Spacer(Modifier.size(10.dp))
+    }
     IconButton(onClick = onReplay, modifier = Modifier.size(64.dp)) {
       Icon(Icons.Filled.Replay, contentDescription = "Replay an announcement", tint = Palette.Dim, modifier = Modifier.size(36.dp))
     }
