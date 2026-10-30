@@ -83,7 +83,7 @@ class PortalAudio(private val awaitMic: () -> Unit) : CallAudio {
       val out = ByteArray(n * 2)
       if (SystemClock.elapsedRealtime() >= muteUntil) {
         for (i in 0 until n) {
-          val s = frame[i].toInt()
+          val s = softGain(frame[i].toInt())
           out[2 * i] = s.toByte()
           out[2 * i + 1] = (s shr 8).toByte()
         }
@@ -295,8 +295,25 @@ class PortalAudio(private val awaitMic: () -> Unit) : CallAudio {
     r.release()
   }
 
+  /**
+   * The same soft-knee gain the voice-note path uses (Microphone): ×8 below the knee, gentler
+   * above it. The Portal's far-field array doesn't need it; a plain tablet's dual mics at room
+   * distance do — without it, ordinary indoor speech reached the call quiet enough that the call
+   * stack's own activity level never tripped and calls hung up as idle mid-sentence.
+   */
+  private fun softGain(s: Int): Int {
+    val g = s * GAIN
+    val a = abs(g)
+    if (a <= KNEE) return g
+    val over = KNEE + (a - KNEE) / 4
+    return (if (g < 0) -over else over).coerceIn(-32_767, 32_767)
+  }
+
   private companion object {
     const val TAG = "MuseCall"
+    /** How hard quiet audio is pushed: ×8 (≈ +18 dB) below the knee, gentler above it. */
+    const val GAIN = 8
+    const val KNEE = 24_000
     const val MAX_QUEUED_BYTES = CALL_RATE * 2 * 5
     const val RECORD_BUFFER_BYTES = CALL_RATE * 2 * 320 / 1000
     /** Two frames: the writer stays about 80 ms ahead of the speaker, so a flush leaves little behind. */
