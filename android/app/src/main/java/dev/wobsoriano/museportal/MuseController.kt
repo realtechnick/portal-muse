@@ -533,7 +533,12 @@ class MuseController(private val context: Context) {
     val audio = PortalAudio { heyMuse.awaitMicFree(MIC_HANDOFF_MS) }
     callAudio = audio
     Log.i(TAG, "calling $id, ${settings.duplex} duplex")
-    c.call(id, audio, CallOptions(duplex = settings.duplex, overall = CALL_LIMIT, admit = CALL_ADMIT))
+    // The call mic runs through PortalAudio's x8 gain, so room noise arrives hot too: without a
+    // threshold, the gained noise floor reads as never-ending speech to the server's speech
+    // detection and the caller's turn never ends (field report, 0.7.1: stuck at Listening after
+    // a long turn). Frames under the threshold become true digital silence 400 ms after the
+    // last speech frame, which is what lets the server close the turn.
+    c.call(id, audio, CallOptions(duplex = settings.duplex, overall = CALL_LIMIT, admit = CALL_ADMIT, micThreshold = CALL_MIC_THRESHOLD))
   }
 
   fun ask(text: String) {
@@ -894,6 +899,13 @@ class MuseController(private val context: Context) {
     val CALL_ADMIT = 12.seconds
     /** The ESP32 gadget's limit; the SDK's own default is 5 minutes. */
     val CALL_LIMIT = 15.minutes
+    /**
+     * The call machine's speech level, in post-gain RMS: frames under it are sent as digital
+     * silence once the speech tail passes. Tuned above a quiet kitchen's gained noise floor and
+     * below ordinary indoor speech at ~20 inches; if soft speech gets clipped, lower it, and if
+     * turns hang open again, raise it.
+     */
+    const val CALL_MIC_THRESHOLD = 800
     const val REPLY_WAIT_MS = 6_000
     /** A card and the audio that follows it within this window are one announcement. */
     const val ENTRY_PAIR_WINDOW_MS = 120_000L
