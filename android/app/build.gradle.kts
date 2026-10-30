@@ -11,8 +11,8 @@ android {
     applicationId = "dev.wobsoriano.museportal"
     minSdk = 28
     targetSdk = 28
-    versionCode = 11
-    versionName = "0.7.0"
+    versionCode = 12
+    versionName = "0.7.1"
     // The Portal is arm64; Vosk's native code for other ABIs would add ~10 MB each.
     ndk { abiFilters += listOf("arm64-v8a") }
   }
